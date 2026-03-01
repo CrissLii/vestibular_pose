@@ -1,0 +1,30 @@
+{
+  "spin_in_place": {
+    "source": "calibration_from_good_videos",
+    "n_videos": 1,
+    "std_deg": {
+      "mild_max": 1.0055618912728392,
+      "moderate_max": 1.2569523640910492,
+      "severe_max": 1.6759364854547323,
+      "method": "margin_from_median",
+      "base": 0.8379682427273661
+    },
+    "mean_deg": {
+      "mild_max": 1.905121672745617,
+      "moderate_max": 2.3814020909320215,
+      "severe_max": 3.175202787909362,
+      "method": "margin_from_median",
+      "base": 1.587601393954681
+    },
+    "notes": "If n_videos<5, thresholds use margin from median; with more videos, use quantiles."
+  },
+  "samples": [
+    {
+      "video": "data/calib/spin/good/good_01.mp4",
+      "trunk_angle_std_deg": 0.8379682427273661,
+      "trunk_angle_mean_deg": 1.587601393954681,
+      "frames_used": 600,
+      "frames_total": 600
+    }
+  ]
+}

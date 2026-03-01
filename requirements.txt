@@ -1,0 +1,6 @@
+ultralytics>=8.0.0
+numpy>=1.23
+opencv-python>=4.8
+matplotlib>=3.7
+tqdm>=4.66
+moviepy>=1.0

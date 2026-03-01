@@ -1,130 +1,235 @@
+"""小推车 (Wheelbarrow Walk) evaluator.
+
+Metrics from 评估指标.md:
+  - theta_torso_drop: 躯干下垂角 (° from horizontal)
+  - sd_torso_lat:     侧向摆动 — trunk X std (normalised)
+  - ai_hand:          左右手交替指数 (cross-correlation lag-1)
+  - sl_sym:           步长对称性 (ratio, 1.0 = perfect)
+  - cc_limb:          对侧协调性 (cross-correlation of R_wrist & L_ankle)
+"""
 from __future__ import annotations
+
 from dataclasses import dataclass
-from enum import Enum
-from typing import List, Dict, Any
+from typing import Dict, Any
 
 import numpy as np
-from ..pose.keypoints import KeypointsFrame
 
+from .context import EvalContext, Severity, max_severity
+from ..features.trunk_angle import trunk_angle_deg
+from ..features.phase_detection import detect_active_phase
+
+NOSE = 0
+LSH, RSH = 5, 6
 LWR, RWR = 9, 10
 LHP, RHP = 11, 12
 LANK, RANK = 15, 16
 
-class Severity(str, Enum):
-    NORMAL = "正常"
-    MILD = "轻度偏差"
-    MODERATE = "中度偏差"
-    SEVERE = "重度偏差"
 
 @dataclass
 class WheelbarrowMetrics:
     frames_total: int
     frames_used: int
-    wrist_below_hip_ratio: float
-    hip_dx_px: float
-    body_sag_ratio: float    # ankle much lower than hip (legs sagging) ratio
+    theta_torso_drop: float     # mean trunk angle from horizontal (°)
+    sd_torso_lat: float         # lateral sway (normalised)
+    ai_hand: float              # hand alternation index (−1 to 1)
+    sl_sym: float               # step-length symmetry (ratio)
+    cc_limb: float              # contralateral coordination (−1 to 1)
 
-def compute_wheelbarrow_metrics(kpt_frames: List[KeypointsFrame], conf_thresh: float = 0.2) -> tuple[WheelbarrowMetrics, Dict[str, Any]]:
-    hip = []
-    wrist = []
-    ankle = []
-    used = 0
 
-    for f in kpt_frames:
+_NEEDED = [LSH, RSH, LWR, RWR, LHP, RHP, LANK, RANK]
+
+
+def _extract(ctx: EvalContext):
+    sh_mid, hip_mid = [], []
+    lwr_y, rwr_y = [], []
+    lank_y, rank_y = [], []
+    trunk_xy = []  # mid-trunk x for lateral sway
+
+    for f in ctx.kpt_frames:
         xy, cf = f.xy, f.conf
-        need = [LWR, RWR, LHP, RHP, LANK, RANK]
-        if max(need) >= len(cf):
+        if max(_NEEDED) >= len(cf):
             continue
-        if min(cf[i] for i in need) < conf_thresh:
+        if min(cf[i] for i in _NEEDED) < ctx.conf_thresh:
             continue
 
-        hip_xy = (xy[LHP] + xy[RHP]) / 2.0
-        wr_xy = (xy[LWR] + xy[RWR]) / 2.0
-        ank_xy = (xy[LANK] + xy[RANK]) / 2.0
+        sp = (xy[LSH] + xy[RSH]) / 2.0
+        hp = (xy[LHP] + xy[RHP]) / 2.0
+        sh_mid.append(sp.astype(np.float64))
+        hip_mid.append(hp.astype(np.float64))
+        trunk_xy.append(((sp + hp) / 2.0).astype(np.float64))
+        lwr_y.append(float(xy[LWR][1]))
+        rwr_y.append(float(xy[RWR][1]))
+        lank_y.append(float(xy[LANK][1]))
+        rank_y.append(float(xy[RANK][1]))
 
-        hip.append(hip_xy.astype(np.float64))
-        wrist.append(wr_xy.astype(np.float64))
-        ankle.append(ank_xy.astype(np.float64))
-        used += 1
+    return {
+        "sh_mid": np.asarray(sh_mid), "hip_mid": np.asarray(hip_mid),
+        "trunk_xy": np.asarray(trunk_xy),
+        "lwr_y": np.asarray(lwr_y), "rwr_y": np.asarray(rwr_y),
+        "lank_y": np.asarray(lank_y), "rank_y": np.asarray(rank_y),
+    }
 
-    n = len(kpt_frames)
-    if used < 20:
-        m = WheelbarrowMetrics(n, used, float("nan"), float("nan"), float("nan"))
-        return m, {"frames_total": n, "frames_used": used}
 
-    hip = np.asarray(hip)
-    wrist = np.asarray(wrist)
-    ankle = np.asarray(ankle)
+def _cross_corr_lag1(a: np.ndarray, b: np.ndarray) -> float:
+    """Normalised cross-correlation at lag ±1 (used for alternation index)."""
+    a = a - np.mean(a)
+    b = b - np.mean(b)
+    denom = (np.std(a) * np.std(b) * len(a)) + 1e-8
+    cc = float(np.correlate(a, b, mode="full")[len(a) - 1])  # lag-0
+    return cc / denom
 
-    wrist_below_hip_ratio = float(np.mean((wrist[:, 1] > hip[:, 1]).astype(np.float64)))
-    hip_dx = float(np.std(hip[:, 0]))
 
-    # sag: ankles much lower (y bigger) than hips -> legs dropping
-    sag = (ankle[:, 1] - hip[:, 1])  # positive if ankle lower
-    body_sag_ratio = float(np.mean((sag > 80.0).astype(np.float64)))
+def _step_distances(wrist_y: np.ndarray) -> np.ndarray:
+    """Estimate per-step forward distance from wrist Y (proxy for forward movement)."""
+    # Detect peaks (hand forward swing) as local minima in Y (hand down = forward)
+    from scipy.signal import find_peaks
+    # invert for peaks (lower Y = forward in most camera setups)
+    peaks, _ = find_peaks(-wrist_y, distance=5, prominence=5.0)
+    if len(peaks) < 2:
+        return np.array([])
+    return np.abs(np.diff(peaks).astype(np.float64))
 
-    m = WheelbarrowMetrics(n, used, wrist_below_hip_ratio, hip_dx, body_sag_ratio)
-    return m, {"frames_total": n, "frames_used": used}
 
-def _sev_ratio(x: float, good: float, ok: float, bad: float) -> Severity:
-    if np.isnan(x): return Severity.SEVERE
-    if x >= good: return Severity.NORMAL
-    if x >= ok: return Severity.MILD
-    if x >= bad: return Severity.MODERATE
-    return Severity.SEVERE
+def compute_wheelbarrow_metrics(ctx: EvalContext) -> tuple[WheelbarrowMetrics, Dict[str, Any]]:
+    d = _extract(ctx)
+    n_total = len(ctx.kpt_frames)
+    n_used = len(d["hip_mid"])
 
-def _sev_dx(dx: float) -> Severity:
-    if np.isnan(dx): return Severity.SEVERE
-    if dx >= 60: return Severity.NORMAL
-    if dx >= 40: return Severity.MILD
-    if dx >= 20: return Severity.MODERATE
-    return Severity.SEVERE
+    nan_m = WheelbarrowMetrics(n_total, n_used, *([float("nan")] * 5))
+    if n_used < 30:
+        return nan_m, {"note": "Not enough valid frames"}
 
-def _max_sev(*ss: Severity) -> Severity:
-    order = {Severity.NORMAL:0, Severity.MILD:1, Severity.MODERATE:2, Severity.SEVERE:3}
-    best = ss[0]
-    for s in ss[1:]:
-        if order[s] > order[best]:
-            best = s
-    return best
+    fps = ctx.fps
+    bh = ctx.body_height_px
 
-def grade_wheelbarrow(m: WheelbarrowMetrics) -> Dict[str, Any]:
-    s_hand = _sev_ratio(m.wrist_below_hip_ratio, good=0.75, ok=0.55, bad=0.35)
-    s_move = _sev_dx(m.hip_dx_px)
-    # sag ratio: lower is better, so invert
-    if np.isnan(m.body_sag_ratio):
-        s_sag = Severity.SEVERE
-    elif m.body_sag_ratio <= 0.20:
-        s_sag = Severity.NORMAL
-    elif m.body_sag_ratio <= 0.40:
-        s_sag = Severity.MILD
-    elif m.body_sag_ratio <= 0.60:
-        s_sag = Severity.MODERATE
+    # ---- Active phase ----
+    phase = detect_active_phase(d["hip_mid"], fps, idle_speed_thresh=6.0)
+    s, e = phase.start_idx, phase.end_idx
+    if e - s < 20:
+        return nan_m, {"note": "Active phase too short"}
+
+    sh = d["sh_mid"][s:e]
+    hp = d["hip_mid"][s:e]
+    trunk_xy = d["trunk_xy"][s:e]
+    lwr = d["lwr_y"][s:e]
+    rwr = d["rwr_y"][s:e]
+    lank = d["lank_y"][s:e]
+    rank = d["rank_y"][s:e]
+
+    # ---- θ_torso_drop: trunk angle from horizontal ----
+    # trunk_angle_deg gives angle from vertical; 90° - θ = angle from horizontal
+    trunk_angles = np.array([trunk_angle_deg(sh[i], hp[i]) for i in range(len(sh))])
+    # In wheelbarrow, trunk is roughly horizontal → angle from vertical ~ 60-90°
+    # "drop" = how far below horizontal the trunk sags
+    theta_drop = float(90.0 - np.mean(trunk_angles))
+    theta_drop = max(0.0, theta_drop)  # clamp to non-negative
+
+    # ---- SD_torso_lat: lateral sway ----
+    sd_lat_px = float(np.std(trunk_xy[:, 0]))
+    sd_torso_lat = ctx.norm(sd_lat_px)
+
+    # ---- AI_hand: left-right hand alternation ----
+    ai_hand = _cross_corr_lag1(lwr, rwr)
+
+    # ---- SL_sym: step-length symmetry ----
+    l_steps = _step_distances(lwr)
+    r_steps = _step_distances(rwr)
+    if len(l_steps) > 0 and len(r_steps) > 0:
+        n_min = min(len(l_steps), len(r_steps))
+        l_mean = float(np.mean(l_steps[:n_min]))
+        r_mean = float(np.mean(r_steps[:n_min]))
+        sl_sym = min(l_mean, r_mean) / (max(l_mean, r_mean) + 1e-8)
     else:
-        s_sag = Severity.SEVERE
+        sl_sym = float("nan")
 
-    sev = _max_sev(s_hand, s_move, s_sag)
+    # ---- CC_limb: contralateral coordination (R_wrist vs L_ankle) ----
+    cc_limb = _cross_corr_lag1(rwr, lank)
+
+    metrics = WheelbarrowMetrics(
+        frames_total=n_total,
+        frames_used=n_used,
+        theta_torso_drop=theta_drop,
+        sd_torso_lat=sd_torso_lat,
+        ai_hand=ai_hand,
+        sl_sym=sl_sym,
+        cc_limb=cc_limb,
+    )
+    debug = {
+        "active_phase": (s, e),
+        "body_height_px": bh,
+        "trunk_angle_mean": float(np.mean(trunk_angles)),
+    }
+    return metrics, debug
+
+
+# --------------- Grading ---------------
+
+def _sev_drop(val: float) -> Severity:
+    """Lower drop angle (closer to horizontal) is better."""
+    if np.isnan(val): return Severity.MILD
+    if val <= 10: return Severity.NORMAL
+    if val <= 20: return Severity.MILD
+    if val <= 35: return Severity.MODERATE
+    return Severity.SEVERE
+
+def _sev_lat(val: float) -> Severity:
+    if np.isnan(val): return Severity.MILD
+    if val <= 0.02: return Severity.NORMAL
+    if val <= 0.04: return Severity.MILD
+    if val <= 0.07: return Severity.MODERATE
+    return Severity.SEVERE
+
+def _sev_ai(val: float) -> Severity:
+    """Negative correlation means good alternation; positive = moving together."""
+    if np.isnan(val): return Severity.MILD
+    if val <= -0.3: return Severity.NORMAL
+    if val <= 0.0: return Severity.MILD
+    if val <= 0.3: return Severity.MODERATE
+    return Severity.SEVERE
+
+def _sev_sym(val: float) -> Severity:
+    if np.isnan(val): return Severity.MILD
+    if val >= 0.85: return Severity.NORMAL
+    if val >= 0.70: return Severity.MILD
+    if val >= 0.50: return Severity.MODERATE
+    return Severity.SEVERE
+
+def _sev_cc(val: float) -> Severity:
+    """Negative = good contralateral coordination (opposite limbs move together)."""
+    if np.isnan(val): return Severity.MILD
+    if val <= -0.2: return Severity.NORMAL
+    if val <= 0.1: return Severity.MILD
+    if val <= 0.4: return Severity.MODERATE
+    return Severity.SEVERE
+
+
+def grade_wheelbarrow(metrics: WheelbarrowMetrics, thresholds: dict | None = None) -> Dict[str, Any]:
+    sevs = [
+        ("theta_torso_drop", _sev_drop(metrics.theta_torso_drop)),
+        ("sd_torso_lat", _sev_lat(metrics.sd_torso_lat)),
+        ("ai_hand", _sev_ai(metrics.ai_hand)),
+        ("sl_sym", _sev_sym(metrics.sl_sym)),
+        ("cc_limb", _sev_cc(metrics.cc_limb)),
+    ]
+
+    sev = max_severity(*(s for _, s in sevs))
     passed = sev in (Severity.NORMAL, Severity.MILD)
 
-    if sev == Severity.NORMAL:
-        suggestion = "手支撑比例高，移动连续，身体保持较好。"
-    elif sev == Severity.MILD:
-        suggestion = "轻度偏差：注意手支撑稳定性，避免腿部下垂。"
-    elif sev == Severity.MODERATE:
-        suggestion = "中度偏差：支撑不够或身体下垂明显，建议降低距离并加强核心控制。"
-    else:
-        suggestion = "重度偏差：姿势控制不足，建议在辅助下练习分解动作。"
+    reasons = {}
+    for name, s in sevs:
+        reasons[name] = getattr(metrics, name)
+        reasons[f"{name}_level"] = s.value
+
+    suggestions = {
+        Severity.NORMAL: "手支撑稳定、躯干保持水平，左右交替节律良好。",
+        Severity.MILD: "轻度偏差：注意保持躯干不下垂，左右手交替更有节奏。",
+        Severity.MODERATE: "中度偏差：躯干下垂或双侧协调不足，建议缩短距离并加强核心力量。",
+        Severity.SEVERE: "重度偏差：姿势控制明显不足，建议在辅助下练习分解动作。",
+    }
 
     return {
         "pass": passed,
         "severity": sev.value,
-        "reasons": {
-            "wrist_below_hip_ratio": m.wrist_below_hip_ratio,
-            "hand_support_level": s_hand.value,
-            "hip_dx_px": m.hip_dx_px,
-            "move_level": s_move.value,
-            "body_sag_ratio": m.body_sag_ratio,
-            "sag_level": s_sag.value,
-        },
-        "suggestion": suggestion,
+        "reasons": reasons,
+        "suggestion": suggestions[sev],
     }

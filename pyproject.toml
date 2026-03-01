@@ -12,6 +12,7 @@ dependencies = [
   "tqdm>=4.66",
   "gradio>=4.0",
   "moviepy>=1.0",
+  "scipy>=1.10",
 ]
 
 [project.optional-dependencies]

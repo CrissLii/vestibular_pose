@@ -4,3 +4,4 @@ opencv-python>=4.8
 matplotlib>=3.7
 tqdm>=4.66
 moviepy>=1.0
+scipy>=1.10

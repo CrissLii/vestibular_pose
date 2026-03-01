@@ -252,6 +252,20 @@
 .step-active .step-label { color: var(--primary-light); font-weight: 500; }
 .step-completed .step-label { color: var(--success); }
 
+.step-elapsed {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  animation: fade-in 0.3s ease;
+}
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .step-connector {
   position: absolute;
   top: 18px;

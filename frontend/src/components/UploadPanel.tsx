@@ -4,12 +4,14 @@ import {
   ScanLine, Brain, BarChart3, Film, CheckCircle2,
 } from 'lucide-react';
 import type { AppPhase } from '../types';
+import type { StepDoneEvent } from '../api';
 import './UploadPanel.css';
 
 interface Props {
   phase: AppPhase;
   progress: number;
   stage: string;
+  completedSteps: Record<string, StepDoneEvent>;
   error: string;
   view: string;
   kptConf: number;
@@ -20,22 +22,41 @@ interface Props {
 }
 
 const PIPELINE_STEPS = [
-  { id: 'upload',   label: '上传视频',   icon: Upload,       threshold: 5 },
-  { id: 'pose',     label: '姿态估计',   icon: ScanLine,     threshold: 15 },
-  { id: 'detect',   label: '动作识别',   icon: Brain,        threshold: 45 },
-  { id: 'evaluate', label: '指标计算',   icon: BarChart3,    threshold: 55 },
-  { id: 'render',   label: '视频渲染',   icon: Film,         threshold: 78 },
-  { id: 'done',     label: '完成',       icon: CheckCircle2, threshold: 96 },
+  { id: 'pose',     label: '姿态估计',   icon: ScanLine },
+  { id: 'detect',   label: '动作识别',   icon: Brain },
+  { id: 'evaluate', label: '指标计算',   icon: BarChart3 },
+  { id: 'render',   label: '视频渲染',   icon: Film },
+  { id: 'done',     label: '完成',       icon: CheckCircle2 },
 ];
 
-function stepStatus(progress: number, threshold: number, nextThreshold: number) {
-  if (progress >= nextThreshold) return 'completed';
-  if (progress >= threshold) return 'active';
+// Order index for determining status
+const STEP_ORDER = ['pose', 'detect', 'evaluate', 'render', 'done'];
+
+function getStatus(
+  stepId: string,
+  completedSteps: Record<string, StepDoneEvent>,
+): 'pending' | 'active' | 'completed' {
+  if (completedSteps[stepId]) return 'completed';
+
+  const completedIds = Object.keys(completedSteps);
+  if (completedIds.length === 0) {
+    return stepId === 'pose' ? 'active' : 'pending';
+  }
+
+  // Find the max completed index
+  let maxDone = -1;
+  for (const cid of completedIds) {
+    const idx = STEP_ORDER.indexOf(cid);
+    if (idx > maxDone) maxDone = idx;
+  }
+
+  const myIdx = STEP_ORDER.indexOf(stepId);
+  if (myIdx === maxDone + 1) return 'active';
   return 'pending';
 }
 
 export function UploadPanel({
-  phase, progress, stage, error, view, kptConf,
+  phase, progress, stage, completedSteps, error, view, kptConf,
   onViewChange, onKptConfChange, onUpload, onReset,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -62,12 +83,11 @@ export function UploadPanel({
 
   const isProcessing = phase === 'uploading' || phase === 'processing';
 
-  // Processing view: full pipeline visualization
+  // Processing view
   if (isProcessing) {
     return (
       <div className="upload-panel">
         <div className="processing-card">
-          {/* Animated header */}
           <div className="processing-header">
             <div className="pulse-ring">
               <Loader2 size={32} className="spin processing-icon" />
@@ -76,13 +96,12 @@ export function UploadPanel({
             <p className="processing-stage">{stage}</p>
           </div>
 
-          {/* Pipeline steps */}
+          {/* Pipeline steps with real timing */}
           <div className="pipeline-steps">
             {PIPELINE_STEPS.map((step, i) => {
-              const nextT = i < PIPELINE_STEPS.length - 1
-                ? PIPELINE_STEPS[i + 1].threshold : 100;
-              const status = stepStatus(progress, step.threshold, nextT);
+              const status = getStatus(step.id, completedSteps);
               const Icon = step.icon;
+              const doneEvt = completedSteps[step.id];
               return (
                 <div key={step.id} className={`pipeline-step step-${status}`}>
                   <div className="step-icon-wrap">
@@ -95,6 +114,9 @@ export function UploadPanel({
                     )}
                   </div>
                   <span className="step-label">{step.label}</span>
+                  {doneEvt && (
+                    <span className="step-elapsed">{doneEvt.elapsed}s</span>
+                  )}
                   {i < PIPELINE_STEPS.length - 1 && (
                     <div className={`step-connector ${status === 'completed' ? 'filled' : ''}`} />
                   )}
@@ -116,7 +138,6 @@ export function UploadPanel({
             </div>
           </div>
 
-          {/* File info */}
           {selectedFile && (
             <div className="processing-file-info">
               <Video size={14} />
@@ -131,7 +152,7 @@ export function UploadPanel({
     );
   }
 
-  // Idle / error view: upload form
+  // Idle / error view
   return (
     <div className="upload-panel">
       <div className="upload-card">

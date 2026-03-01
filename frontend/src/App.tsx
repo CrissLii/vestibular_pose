@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { EvalResponse, AppPhase } from './types';
 import { evaluateVideo, reEvaluate } from './api';
-import type { ProgressInfo } from './api';
+import type { ProgressInfo, StepDoneEvent } from './api';
 import { Header } from './components/Header';
 import { UploadPanel } from './components/UploadPanel';
 import { ResultPanel } from './components/ResultPanel';
@@ -11,6 +11,7 @@ function App() {
   const [phase, setPhase] = useState<AppPhase>('idle');
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState('');
+  const [completedSteps, setCompletedSteps] = useState<Record<string, StepDoneEvent>>({});
   const [result, setResult] = useState<EvalResponse | null>(null);
   const [error, setError] = useState('');
   const [view, setView] = useState('unknown');
@@ -19,12 +20,16 @@ function App() {
   const handleProgress = useCallback((info: ProgressInfo) => {
     setProgress(info.pct);
     setStage(info.stage);
+    if (info.stepDone) {
+      setCompletedSteps(prev => ({ ...prev, [info.stepDone!.step]: info.stepDone! }));
+    }
   }, []);
 
   const handleUpload = useCallback(async (file: File) => {
     setPhase('processing');
     setProgress(0);
     setStage('准备中...');
+    setCompletedSteps({});
     setError('');
     setResult(null);
 
@@ -43,6 +48,7 @@ function App() {
     setPhase('processing');
     setProgress(50);
     setStage('重新评估中...');
+    setCompletedSteps({});
     try {
       const data = await reEvaluate(result.session_id, actionId);
       setResult(data);
@@ -60,6 +66,7 @@ function App() {
     setError('');
     setProgress(0);
     setStage('');
+    setCompletedSteps({});
   }, []);
 
   return (
@@ -71,6 +78,7 @@ function App() {
             phase={phase}
             progress={progress}
             stage={stage}
+            completedSteps={completedSteps}
             error={error}
             view={view}
             kptConf={kptConf}

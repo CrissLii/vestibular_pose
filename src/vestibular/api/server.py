@@ -10,9 +10,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -92,140 +92,143 @@ async def evaluate_video(
     kpt_conf: float = Form(0.20),
     view: str = Form("unknown"),
 ):
-    """Full evaluation pipeline: upload video → pose → detect → evaluate → render."""
-    # Save uploaded video to temp file
+    """Streaming evaluation: yields NDJSON progress events, final line is the result."""
+    import time as _time
+
     suffix = Path(video.filename or "video.mp4").suffix
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     shutil.copyfileobj(video.file, tmp)
     tmp.close()
     tmp_path = tmp.name
+    filename = video.filename
 
-    try:
-        import time as _time
+    def _event(evt: str, **kwargs) -> str:
+        return json.dumps({"event": evt, **kwargs}, ensure_ascii=False) + "\n"
+
+    def generate():
         timings: dict[str, float] = {}
 
-        t0 = _time.perf_counter()
-        kpt_frames, video_meta = step_pose_infer(
-            video_path=tmp_path, model_path=model_path,
-        )
-        timings["pose_inference"] = round(_time.perf_counter() - t0, 2)
+        try:
+            # Step 1: Pose inference
+            t0 = _time.perf_counter()
+            kpt_frames, video_meta = step_pose_infer(
+                video_path=tmp_path, model_path=model_path,
+            )
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings["pose_inference"] = elapsed
+            yield _event("step_done", step="pose", elapsed=elapsed)
 
-        t0 = _time.perf_counter()
-        action_id, candidates, feat = step_detect_action(kpt_frames)
-        timings["action_detection"] = round(_time.perf_counter() - t0, 2)
+            # Step 2: Detect action
+            t0 = _time.perf_counter()
+            action_id, candidates, feat = step_detect_action(kpt_frames)
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings["action_detection"] = elapsed
+            yield _event("step_done", step="detect", elapsed=elapsed,
+                         action=action_id, action_zh=zh(action_id))
 
-        t0 = _time.perf_counter()
-        thresholds, thresholds_meta = step_load_thresholds(
-            paths.data / "thresholds.json"
-        )
-        ctx = step_build_context(
-            kpt_frames=kpt_frames,
-            fps=video_meta.fps,
-            view=view,
-            kpt_conf_thresh=kpt_conf,
-        )
-        action_id_eval, metrics_dict, grading, debug = step_evaluate(
-            action_id=action_id, ctx=ctx, thresholds=thresholds,
-        )
-        timings["evaluation"] = round(_time.perf_counter() - t0, 2)
+            # Step 3: Evaluate
+            t0 = _time.perf_counter()
+            thresholds, _ = step_load_thresholds(paths.data / "thresholds.json")
+            ctx = step_build_context(
+                kpt_frames=kpt_frames, fps=video_meta.fps,
+                view=view, kpt_conf_thresh=kpt_conf,
+            )
+            action_id_eval, metrics_dict, grading, debug = step_evaluate(
+                action_id=action_id, ctx=ctx, thresholds=thresholds,
+            )
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings["evaluation"] = elapsed
+            yield _event("step_done", step="evaluate", elapsed=elapsed)
 
-        t0 = _time.perf_counter()
-        out_stem = Path(video.filename or "video").stem
-        annotated_path = paths.videos / f"{out_stem}_{action_id_eval}_annotated.mp4"
-        step_render_video(
-            video_path=tmp_path,
-            kpt_frames=kpt_frames,
-            out_path=annotated_path,
-            action_id=action_id_eval,
-            grading=grading,
-            conf_thresh=kpt_conf,
-        )
-        timings["video_render"] = round(_time.perf_counter() - t0, 2)
+            # Step 4: Render video
+            t0 = _time.perf_counter()
+            out_stem = Path(filename or "video").stem
+            annotated_path = paths.videos / f"{out_stem}_{action_id_eval}_annotated.mp4"
+            step_render_video(
+                video_path=tmp_path, kpt_frames=kpt_frames,
+                out_path=annotated_path, action_id=action_id_eval,
+                grading=grading, conf_thresh=kpt_conf,
+            )
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings["video_render"] = elapsed
+            yield _event("step_done", step="render", elapsed=elapsed)
 
-        t0 = _time.perf_counter()
-        reasons = grading.get("reasons", {})
-        radar_path = generate_radar_chart(reasons, zh(action_id_eval))
-        cop_path = generate_cop_trajectory(kpt_frames, conf_thresh=kpt_conf)
-        sym_path = generate_symmetry_chart(reasons, action_id_eval)
-        timings["chart_generation"] = round(_time.perf_counter() - t0, 2)
-        timings["total"] = round(sum(timings.values()), 2)
+            # Step 5: Charts & report
+            t0 = _time.perf_counter()
+            reasons = grading.get("reasons", {})
+            generate_radar_chart(reasons, zh(action_id_eval))
+            generate_cop_trajectory(kpt_frames, conf_thresh=kpt_conf)
+            generate_symmetry_chart(reasons, action_id_eval)
 
-        # Build metric scores for frontend radar chart (1-5 scale)
-        radar_data = []
-        for k, v in reasons.items():
-            if k.endswith("_level"):
-                metric_key = k.replace("_level", "")
-                radar_data.append({
-                    "metric": metric_key,
-                    "score": _sev_to_5(str(v)),
-                    "level": str(v),
-                    "value": reasons.get(metric_key),
-                })
+            radar_data = []
+            for k, v in reasons.items():
+                if k.endswith("_level"):
+                    mk = k.replace("_level", "")
+                    radar_data.append({
+                        "metric": mk, "score": _sev_to_5(str(v)),
+                        "level": str(v), "value": reasons.get(mk),
+                    })
+            cop_data = _extract_cop_data(kpt_frames, kpt_conf)
+            sym_data = _extract_symmetry_data(reasons, action_id_eval)
 
-        # Build COP trajectory data
-        cop_data = _extract_cop_data(kpt_frames, kpt_conf)
+            session_id = str(uuid.uuid4())[:8]
+            _sessions[session_id] = {
+                "kpt_frames": kpt_frames, "fps": video_meta.fps,
+                "view": view, "kpt_conf": kpt_conf,
+                "candidates": candidates, "feat": feat,
+                "thresholds": thresholds,
+                "video_filename": filename, "tmp_path": tmp_path,
+            }
 
-        # Build symmetry data
-        sym_data = _extract_symmetry_data(reasons, action_id_eval)
+            report = {
+                "video": filename, "video_fps": video_meta.fps,
+                "body_height_px": ctx.body_height_px, "view": view,
+                "action_detected": action_id_eval,
+                "action_detected_zh": zh(action_id_eval),
+                "action_candidates": [
+                    {"action": c.action, "label": zh(c.action),
+                     "score": round(c.score, 4), "details": c.details}
+                    for c in candidates
+                ],
+                "metrics": metrics_dict, "grading": grading,
+            }
+            report_path = paths.reports / f"{out_stem}_{action_id_eval}_report.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(
+                json.dumps(_sanitize(report), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
-        # Cache session for re-evaluation
-        session_id = str(uuid.uuid4())[:8]
-        _sessions[session_id] = {
-            "kpt_frames": kpt_frames,
-            "fps": video_meta.fps,
-            "view": view,
-            "kpt_conf": kpt_conf,
-            "candidates": candidates,
-            "feat": feat,
-            "thresholds": thresholds,
-            "video_filename": video.filename,
-            "tmp_path": tmp_path,
-        }
+            elapsed = round(_time.perf_counter() - t0, 2)
+            timings["chart_generation"] = elapsed
+            timings["total"] = round(sum(timings.values()), 2)
+            yield _event("step_done", step="done", elapsed=elapsed)
 
-        # Save report
-        report = {
-            "video": video.filename,
-            "video_fps": video_meta.fps,
-            "body_height_px": ctx.body_height_px,
-            "view": view,
-            "action_detected": action_id_eval,
-            "action_detected_zh": zh(action_id_eval),
-            "action_candidates": [
-                {"action": c.action, "label": zh(c.action),
-                 "score": round(c.score, 4), "details": c.details}
-                for c in candidates
-            ],
-            "metrics": metrics_dict,
-            "grading": grading,
-        }
-        report_path = paths.reports / f"{out_stem}_{action_id_eval}_report.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(_sanitize(report), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+            # Final result
+            result = _sanitize({
+                "session_id": session_id,
+                "action_detected": action_id_eval,
+                "action_detected_zh": zh(action_id_eval),
+                "candidates": [
+                    {"action": c.action, "label": zh(c.action),
+                     "score": round(c.score, 4)}
+                    for c in candidates[:5]
+                ],
+                "metrics": metrics_dict, "grading": grading,
+                "radar_data": radar_data, "cop_data": cop_data,
+                "symmetry_data": sym_data,
+                "annotated_video": f"/static/videos/{annotated_path.name}",
+                "report_url": f"/static/reports/{report_path.name}",
+                "timings": timings,
+            })
+            yield json.dumps({"event": "complete", "result": result},
+                             ensure_ascii=False) + "\n"
 
-        return _sanitize({
-            "session_id": session_id,
-            "action_detected": action_id_eval,
-            "action_detected_zh": zh(action_id_eval),
-            "candidates": [
-                {"action": c.action, "label": zh(c.action),
-                 "score": round(c.score, 4)}
-                for c in candidates[:5]
-            ],
-            "metrics": metrics_dict,
-            "grading": grading,
-            "radar_data": radar_data,
-            "cop_data": cop_data,
-            "symmetry_data": sym_data,
-            "annotated_video": f"/static/videos/{annotated_path.name}",
-            "report_url": f"/static/reports/{report_path.name}",
-            "timings": timings,
-        })
+        except Exception as e:
+            yield json.dumps({"event": "error", "detail": str(e)},
+                             ensure_ascii=False) + "\n"
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @app.post("/api/re-evaluate")

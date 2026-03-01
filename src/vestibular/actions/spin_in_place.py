@@ -1,9 +1,9 @@
 """原地旋转 (Spin In Place) evaluator.
 
 Metrics from 评估指标.md:
-  - omega_avg:     平均旋转角速度 (°/s, 2D trunk-vector proxy)
-  - cv_omega:      角速度变异系数
-  - d_head:        头部水平位移 — nose X 轨迹长度 (normalised)
+  - omega_avg:     平均旋转角速度 (°/s, via nose-X oscillation frequency)
+  - cv_omega:      角速度变异系数 (inter-peak interval CV)
+  - d_head:        头部漂移不稳定性 (normalised residual after removing oscillation)
   - sd_head_y:     头部垂直稳定性 — std(nose_y) (normalised)
   - theta_torso:   躯干倾斜角均值 (°)
   - sd_theta_torso: 躯干倾斜角标准差 (°)
@@ -33,7 +33,7 @@ class SpinMetrics:
     frames_used: int
     omega_avg: float          # mean angular velocity (°/s)
     cv_omega: float           # CV of angular velocity
-    d_head: float             # head horizontal trajectory (normalised)
+    d_head: float             # head drift instability (normalised)
     sd_head_y: float          # head vertical stability (normalised)
     theta_torso: float        # mean trunk tilt (°)
     sd_theta_torso: float     # trunk tilt std (°)
@@ -43,6 +43,7 @@ class SpinMetrics:
 
 def _extract(ctx: EvalContext):
     hip, sh, nose, trunk, indices = [], [], [], [], []
+    lsh_x, rsh_x = [], []
     for f in ctx.kpt_frames:
         xy, cf = f.xy, f.conf
         needed = [NOSE, LSH, RSH, LHP, RHP]
@@ -56,15 +57,107 @@ def _extract(ctx: EvalContext):
         sh.append(sp.astype(np.float64))
         nose.append(xy[NOSE].astype(np.float64))
         trunk.append(trunk_angle_deg(sp, hp))
+        lsh_x.append(float(xy[LSH][0]))
+        rsh_x.append(float(xy[RSH][0]))
         indices.append(f.frame_idx)
-    return (
-        np.asarray(hip), np.asarray(sh), np.asarray(nose),
-        np.asarray(trunk), indices,
-    )
+    return {
+        "hip": np.asarray(hip), "sh": np.asarray(sh),
+        "nose": np.asarray(nose), "trunk": np.asarray(trunk),
+        "lsh_x": np.asarray(lsh_x), "rsh_x": np.asarray(rsh_x),
+        "indices": indices,
+    }
+
+
+def _estimate_rotation_from_oscillation(
+    nose_x: np.ndarray,
+    shoulder_width: np.ndarray,
+    fps: float,
+) -> tuple[float, float, int]:
+    """Estimate rotation speed from nose-X and shoulder-width oscillation.
+
+    During vertical-axis spinning, nose_x oscillates sinusoidally and
+    apparent shoulder width varies periodically.
+
+    Returns (omega_avg_deg_per_sec, cv_omega, n_half_turns).
+    """
+    from scipy.signal import find_peaks
+
+    # Smooth aggressively to remove jitter before peak detection
+    nose_smooth = smooth_series(nose_x, window=max(5, int(0.08 * fps)))
+    sw_smooth = smooth_series(shoulder_width, window=max(5, int(0.08 * fps)))
+
+    # Detect peaks AND valleys in nose_x → each peak-to-valley is a half-turn
+    signal_range = np.max(nose_smooth) - np.min(nose_smooth)
+    prominence_nx = 0.15 * signal_range
+    min_dist = max(5, int(0.2 * fps))
+
+    peaks, _ = find_peaks(nose_smooth, distance=min_dist, prominence=max(prominence_nx, 3.0))
+    valleys, _ = find_peaks(-nose_smooth, distance=min_dist, prominence=max(prominence_nx, 3.0))
+
+    # Merge peaks and valleys into turning points, sorted by index
+    turning_points = np.sort(np.concatenate([peaks, valleys]))
+
+    if len(turning_points) < 2:
+        # Fallback: try shoulder width oscillation
+        prominence_sw = 0.10 * (np.max(sw_smooth) - np.min(sw_smooth))
+        sw_peaks, _ = find_peaks(sw_smooth, distance=min_dist, prominence=max(prominence_sw, 2.0))
+        sw_valleys, _ = find_peaks(-sw_smooth, distance=min_dist, prominence=max(prominence_sw, 2.0))
+        turning_points = np.sort(np.concatenate([sw_peaks, sw_valleys]))
+
+    if len(turning_points) < 2:
+        return 0.0, float("nan"), 0
+
+    # Each consecutive pair of turning points ≈ half turn (180°)
+    intervals = np.diff(turning_points) / fps  # seconds per half-turn
+    n_half_turns = len(intervals)
+    omega_per_interval = 180.0 / intervals  # °/s for each half-turn
+
+    omega_avg = float(np.mean(omega_per_interval))
+    cv_omega = float(np.std(intervals) / (np.mean(intervals) + 1e-8))
+
+    return omega_avg, cv_omega, n_half_turns
+
+
+def _compute_head_drift(nose_x: np.ndarray, fps: float) -> float:
+    """Measure head instability as drift (linear trend magnitude) of nose_x.
+
+    Normal spinning produces symmetric oscillation around a fixed center.
+    Instability manifests as the center drifting over time.
+    Returns the std of the per-cycle mean positions (normalised later).
+    """
+    from scipy.signal import find_peaks
+
+    nose_smooth = smooth_series(nose_x, window=max(5, int(0.08 * fps)))
+    prominence = 0.15 * (np.max(nose_smooth) - np.min(nose_smooth))
+    min_dist = max(5, int(0.2 * fps))
+
+    peaks, _ = find_peaks(nose_smooth, distance=min_dist, prominence=max(prominence, 3.0))
+    valleys, _ = find_peaks(-nose_smooth, distance=min_dist, prominence=max(prominence, 3.0))
+
+    if len(peaks) < 2 and len(valleys) < 2:
+        # Fallback: just use std of detrended signal
+        t = np.arange(len(nose_x))
+        slope, intercept = np.polyfit(t, nose_x, 1)
+        detrended = nose_x - (slope * t + intercept)
+        return float(np.std(detrended))
+
+    # Compute the midpoint (center) of each full oscillation cycle
+    turning = np.sort(np.concatenate([peaks, valleys]))
+    cycle_centers = []
+    for i in range(0, len(turning) - 1, 2):
+        seg = nose_smooth[turning[i]:turning[i + 1] + 1]
+        cycle_centers.append(float(np.mean(seg)))
+
+    if len(cycle_centers) < 2:
+        return float(np.std(nose_x - np.mean(nose_x)))
+
+    # Drift = std of cycle center positions
+    return float(np.std(cycle_centers))
 
 
 def compute_spin_metrics(ctx: EvalContext) -> tuple[SpinMetrics, Dict[str, Any]]:
-    hip, sh, nose, trunk, indices = _extract(ctx)
+    d = _extract(ctx)
+    hip, sh, nose, trunk = d["hip"], d["sh"], d["nose"], d["trunk"]
     n_total = len(ctx.kpt_frames)
     n_used = len(hip)
 
@@ -79,28 +172,25 @@ def compute_spin_metrics(ctx: EvalContext) -> tuple[SpinMetrics, Dict[str, Any]]
     phase = detect_active_phase(hip, fps, idle_speed_thresh=6.0)
     s, e = phase.start_idx, phase.end_idx
     hip_act = hip[s:e]
-    sh_act = sh[s:e]
     nose_act = nose[s:e]
     trunk_act = trunk[s:e]
 
     if len(hip_act) < 20:
         return nan_m, {"note": "Active phase too short"}
 
-    # ---- Angular velocity (2D proxy) ----
-    # Use trunk vector angle change between frames as rotation proxy
-    trunk_smooth = smooth_series(trunk_act, window=3)
-    d_angle = np.abs(np.diff(trunk_smooth))
-    omega = d_angle * fps  # °/s
-    omega_avg = float(np.mean(omega))
-    cv_omega = float(np.std(omega) / (omega_avg + 1e-8))
-
-    # ---- Head stability ----
+    # ---- Angular velocity via oscillation frequency ----
     nose_x = nose_act[:, 0]
-    nose_y = nose_act[:, 1]
-    d_head_px = trajectory_length(nose_act[:, :1].reshape(-1, 1).repeat(2, axis=1))
-    # Simpler: total absolute X displacement
-    d_head_px = float(np.sum(np.abs(np.diff(nose_x))))
+    shoulder_width = np.abs(d["lsh_x"][s:e] - d["rsh_x"][s:e])
+    omega_avg, cv_omega, n_half = _estimate_rotation_from_oscillation(
+        nose_x, shoulder_width, fps,
+    )
+
+    # ---- Head drift instability ----
+    d_head_px = _compute_head_drift(nose_x, fps)
     d_head = ctx.norm(d_head_px)
+
+    # ---- Head vertical stability ----
+    nose_y = nose_act[:, 1]
     sd_head_y_px = float(np.std(nose_y))
     sd_head_y = ctx.norm(sd_head_y_px)
 
@@ -109,7 +199,6 @@ def compute_spin_metrics(ctx: EvalContext) -> tuple[SpinMetrics, Dict[str, Any]]
     sd_theta_torso = float(np.std(trunk_act))
 
     # ---- Recovery (post-spin) ----
-    # Use frames AFTER the active phase for recovery analysis
     post_start = e
     post_hip = hip[post_start:] if post_start < len(hip) else np.empty((0, 2))
 
@@ -119,19 +208,16 @@ def compute_spin_metrics(ctx: EvalContext) -> tuple[SpinMetrics, Dict[str, Any]]
     if len(post_hip) > 10:
         spd = speed_2d(post_hip, fps)
         spd_smooth = smooth_series(spd, window=5)
-        # Recovery = time until speed < threshold
         thresh = 0.01 * bh * fps if not np.isnan(bh) else 5.0
         below = np.where(spd_smooth < thresh)[0]
         if len(below) > 0:
             t_recovery = float(below[0]) / fps
 
-        # CoP sway: trajectory in first 5 seconds post-spin
         post_5s = min(len(post_hip), int(5.0 * fps))
         if post_5s > 5:
             cop_px = trajectory_length(post_hip[:post_5s])
             cop_post = ctx.norm(cop_px)
     else:
-        # No post-spin data — try detect stop within active phase
         stop = detect_stop_frame(hip_act, fps, speed_thresh_px=6.0)
         if stop is not None and stop < len(hip_act) - 10:
             rest = hip_act[stop:]
@@ -159,7 +245,7 @@ def compute_spin_metrics(ctx: EvalContext) -> tuple[SpinMetrics, Dict[str, Any]]
     debug = {
         "active_phase": (s, e),
         "body_height_px": bh,
-        "omega_series_len": len(omega),
+        "n_half_turns": n_half,
     }
     return metrics, debug
 
@@ -167,29 +253,28 @@ def compute_spin_metrics(ctx: EvalContext) -> tuple[SpinMetrics, Dict[str, Any]]
 # --------------- Grading ---------------
 
 def _sev_omega(val: float) -> Severity:
-    """Stable rotation speed is normal; too erratic or too slow is concerning."""
     if np.isnan(val): return Severity.SEVERE
-    if val >= 20: return Severity.NORMAL
-    if val >= 10: return Severity.MILD
-    if val >= 5: return Severity.MODERATE
+    if val >= 60: return Severity.NORMAL
+    if val >= 30: return Severity.MILD
+    if val >= 10: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_cv_omega(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 0.30: return Severity.NORMAL
-    if val <= 0.50: return Severity.MILD
-    if val <= 0.80: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.40: return Severity.NORMAL
+    if val <= 0.65: return Severity.MILD
+    if val <= 1.00: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_d_head(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 0.5: return Severity.NORMAL
-    if val <= 1.0: return Severity.MILD
-    if val <= 2.0: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.03: return Severity.NORMAL
+    if val <= 0.06: return Severity.MILD
+    if val <= 0.12: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_sd_head_y(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 0.02: return Severity.NORMAL
     if val <= 0.04: return Severity.MILD
     if val <= 0.07: return Severity.MODERATE
@@ -210,14 +295,14 @@ def _sev_sd_theta(val: float) -> Severity:
     return Severity.SEVERE
 
 def _sev_recovery(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL  # no data = no penalty
     if val <= 2.0: return Severity.NORMAL
     if val <= 4.0: return Severity.MILD
     if val <= 7.0: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_cop_post(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL  # no data = no penalty
     if val <= 0.3: return Severity.NORMAL
     if val <= 0.6: return Severity.MILD
     if val <= 1.2: return Severity.MODERATE

@@ -172,7 +172,7 @@ def _sev_bi(val: float) -> Severity:
 
 def _sev_cop_stop(val: float) -> Severity:
     if np.isnan(val):
-        return Severity.MILD
+        return Severity.NORMAL
     if val <= 0.3:
         return Severity.NORMAL
     if val <= 0.6:
@@ -184,7 +184,7 @@ def _sev_cop_stop(val: float) -> Severity:
 
 def _sev_t_stabilize(val: float) -> Severity:
     if np.isnan(val):
-        return Severity.MILD
+        return Severity.NORMAL
     if val <= 1.5:
         return Severity.NORMAL
     if val <= 3.0:
@@ -196,7 +196,7 @@ def _sev_t_stabilize(val: float) -> Severity:
 
 def _sev_theta_prep(val: float) -> Severity:
     if np.isnan(val):
-        return Severity.MILD
+        return Severity.NORMAL
     if val <= 15.0:
         return Severity.NORMAL
     if val <= 25.0:

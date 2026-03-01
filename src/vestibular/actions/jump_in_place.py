@@ -216,36 +216,37 @@ def _sev_h(val: float) -> Severity:
     return Severity.SEVERE
 
 def _sev_cv_h(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 0.15: return Severity.NORMAL
     if val <= 0.25: return Severity.MILD
     if val <= 0.40: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_knee(val: float) -> Severity:
-    """Landing knee angle — moderate flexion (120-160°) is good cushioning."""
-    if np.isnan(val): return Severity.MILD
-    if 120 <= val <= 160: return Severity.NORMAL
-    if 100 <= val <= 170: return Severity.MILD
-    if 80 <= val <= 175: return Severity.MODERATE
+    """Landing knee angle — moderate flexion (120-165°) is good cushioning.
+    Nearly straight (>170°) means stiff landing. Very bent (<100°) unusual."""
+    if np.isnan(val): return Severity.NORMAL
+    if 115 <= val <= 165: return Severity.NORMAL
+    if 95 <= val <= 175: return Severity.MILD
+    if 80 <= val <= 180: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_air_trunk(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 10: return Severity.NORMAL
     if val <= 18: return Severity.MILD
     if val <= 28: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_asym(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 0.03: return Severity.NORMAL
     if val <= 0.06: return Severity.MILD
     if val <= 0.10: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_cv_int(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 0.10: return Severity.NORMAL
     if val <= 0.20: return Severity.MILD
     if val <= 0.35: return Severity.MODERATE

@@ -165,41 +165,49 @@ def compute_wheelbarrow_metrics(ctx: EvalContext) -> tuple[WheelbarrowMetrics, D
 # --------------- Grading ---------------
 
 def _sev_drop(val: float) -> Severity:
-    """Lower drop angle (closer to horizontal) is better."""
-    if np.isnan(val): return Severity.MILD
-    if val <= 10: return Severity.NORMAL
-    if val <= 20: return Severity.MILD
-    if val <= 35: return Severity.MODERATE
+    """Lower drop angle (closer to horizontal) is better.
+    
+    theta_torso_drop = 90 - mean_trunk_angle_from_vertical.
+    A good wheelbarrow has trunk ~horizontal, so trunk_angle ~80-90° from vertical,
+    meaning drop ~ 0-10°.  Larger drop = more sagging.
+    """
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 20: return Severity.NORMAL
+    if val <= 35: return Severity.MILD
+    if val <= 50: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_lat(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 0.02: return Severity.NORMAL
-    if val <= 0.04: return Severity.MILD
-    if val <= 0.07: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.04: return Severity.NORMAL
+    if val <= 0.08: return Severity.MILD
+    if val <= 0.15: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_ai(val: float) -> Severity:
-    """Negative correlation means good alternation; positive = moving together."""
-    if np.isnan(val): return Severity.MILD
-    if val <= -0.3: return Severity.NORMAL
-    if val <= 0.0: return Severity.MILD
-    if val <= 0.3: return Severity.MODERATE
+    """Hand alternation: negative or low positive correlation indicates alternation.
+    High positive (>0.8) means hands moving in sync (less alternation).
+    Thresholds relaxed because in 2D both wrists naturally have similar Y."""
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.3: return Severity.NORMAL
+    if val <= 0.6: return Severity.MILD
+    if val <= 0.85: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_sym(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val >= 0.85: return Severity.NORMAL
-    if val >= 0.70: return Severity.MILD
-    if val >= 0.50: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val >= 0.75: return Severity.NORMAL
+    if val >= 0.55: return Severity.MILD
+    if val >= 0.35: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_cc(val: float) -> Severity:
-    """Negative = good contralateral coordination (opposite limbs move together)."""
-    if np.isnan(val): return Severity.MILD
-    if val <= -0.2: return Severity.NORMAL
-    if val <= 0.1: return Severity.MILD
-    if val <= 0.4: return Severity.MODERATE
+    """Contralateral coordination: negative = good alternation between
+    opposite limbs.  Relaxed thresholds for 2D noise."""
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.1: return Severity.NORMAL
+    if val <= 0.4: return Severity.MILD
+    if val <= 0.7: return Severity.MODERATE
     return Severity.SEVERE
 
 

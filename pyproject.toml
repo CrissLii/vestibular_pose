@@ -6,13 +6,16 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
   "ultralytics>=8.0.0",
-  "numpy>=1.23",
+  "numpy>=1.23,<2",
   "opencv-python>=4.8",
   "matplotlib>=3.7",
   "tqdm>=4.66",
   "gradio>=4.0",
   "moviepy>=1.0",
   "scipy>=1.10",
+  "fastapi>=0.100",
+  "uvicorn>=0.20",
+  "python-multipart>=0.0.5",
 ]
 
 [project.optional-dependencies]

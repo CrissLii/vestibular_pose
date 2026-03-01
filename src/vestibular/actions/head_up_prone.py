@@ -78,11 +78,12 @@ def compute_headup_metrics(ctx: EvalContext) -> tuple[HeadUpMetrics, Dict[str, A
     trunk = d["trunk"]
 
     # ---- Posture hold detection ----
-    # Superman pose: trunk nearly horizontal (angle > 50° from vertical)
-    hold_mask = trunk > 50.0
+    # Superman/head-up pose: trunk tilted away from vertical.
+    # In 2D, prone trunk angle depends on camera view and body geometry.
+    # Use a lenient threshold to capture partial holds.
+    hold_mask = trunk > 30.0
     if np.sum(hold_mask) < 10:
-        # Relax threshold for partial holds
-        hold_mask = trunk > 35.0
+        hold_mask = trunk > 20.0
 
     # Find longest contiguous hold segment
     best_start, best_len, cur_start, cur_len = 0, 0, 0, 0
@@ -157,28 +158,28 @@ def compute_headup_metrics(ctx: EvalContext) -> tuple[HeadUpMetrics, Dict[str, A
 # --------------- Grading ---------------
 
 def _sev_drift(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 0.03: return Severity.NORMAL
     if val <= 0.06: return Severity.MILD
     if val <= 0.12: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_sway(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 0.015: return Severity.NORMAL
-    if val <= 0.03: return Severity.MILD
-    if val <= 0.05: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.03: return Severity.NORMAL
+    if val <= 0.06: return Severity.MILD
+    if val <= 0.10: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_head(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 0.015: return Severity.NORMAL
-    if val <= 0.03: return Severity.MILD
-    if val <= 0.05: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.04: return Severity.NORMAL
+    if val <= 0.08: return Severity.MILD
+    if val <= 0.15: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_si(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val <= 0.02: return Severity.NORMAL
     if val <= 0.04: return Severity.MILD
     if val <= 0.08: return Severity.MODERATE

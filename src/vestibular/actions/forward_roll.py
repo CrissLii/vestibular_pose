@@ -179,21 +179,23 @@ def _sev_t_roll(val: float) -> Severity:
     return Severity.SEVERE
 
 def _sev_jerk(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 50: return Severity.NORMAL
-    if val <= 120: return Severity.MILD
-    if val <= 250: return Severity.MODERATE
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 500: return Severity.NORMAL
+    if val <= 2000: return Severity.MILD
+    if val <= 8000: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_yaw(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
-    if val <= 0.05: return Severity.NORMAL
-    if val <= 0.10: return Severity.MILD
-    if val <= 0.20: return Severity.MODERATE
+    """Lateral deviation during roll. In 2D, X displacement can include forward
+    travel depending on camera angle, so thresholds are generous."""
+    if np.isnan(val): return Severity.NORMAL
+    if val <= 0.30: return Severity.NORMAL
+    if val <= 0.60: return Severity.MILD
+    if val <= 1.20: return Severity.MODERATE
     return Severity.SEVERE
 
 def _sev_q_pose(val: float) -> Severity:
-    if np.isnan(val): return Severity.MILD
+    if np.isnan(val): return Severity.NORMAL
     if val >= 0.7: return Severity.NORMAL
     if val >= 0.5: return Severity.MILD
     if val >= 0.3: return Severity.MODERATE

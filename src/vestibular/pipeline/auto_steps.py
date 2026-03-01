@@ -40,8 +40,12 @@ def step_detect_action(kpt_frames):
 
 
 def step_load_thresholds(thresholds_path: Optional[str | Path]):
-    """Load thresholds.json (optional)."""
+    """Load thresholds.json (optional). Returns (None, None) if missing."""
     if not thresholds_path:
+        return None, None
+
+    p = Path(thresholds_path)
+    if not p.exists():
         return None, None
 
     all_t = load_thresholds(thresholds_path)
@@ -104,4 +108,5 @@ def step_render_video(
         out_path=out_path,
         label=label,
         conf_thresh=conf_thresh,
+        grading=grading,
     )

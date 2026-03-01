@@ -1,4 +1,4 @@
-"""Gradio web UI for vestibular pose evaluation."""
+"""Gradio web UI for vestibular pose evaluation — enhanced with charts and structured display."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +16,12 @@ from ..pipeline.auto_steps import (
     step_render_video,
 )
 from ..config import get_paths
+from ..viz.charts import (
+    generate_radar_chart,
+    generate_cop_trajectory,
+    generate_symmetry_chart,
+    generate_result_html,
+)
 
 ACTION_IDS = [
     "spin_in_place",
@@ -31,50 +37,81 @@ VIEW_CHOICES = [("自动", "unknown"), ("正面", "front"), ("侧面", "side")]
 
 
 def build_app():
-    with gr.Blocks(title="Vestibular Pose Evaluator") as demo:
+    with gr.Blocks(title="儿童统感训练评估") as demo:
         gr.Markdown(
-            "# 儿童统感训练评估\n"
-            "流程：上传/输入视频 → **Pose推理(一次)** → 自动识别动作 → 评分 → 生成骨骼标注视频\n\n"
-            "如果动作识别错了：选择正确动作 → **不重复跑Pose** → 重新评分 + 重新生成标注视频"
+            "# 🧒 儿童统感训练动作评估系统\n"
+            "**流程**：上传视频 → Pose 推理 → 自动识别动作 → 量化评分 → 可视化报告\n\n"
+            "支持 6 种训练动作：原地旋转 · 原地纵跳 · 小推车 · 直线加速跑 · 前滚翻 · 抬头向上"
         )
 
         state = gr.State(value=None)
 
-        with gr.Row():
-            video_input = gr.Video(label="输入视频（上传）", sources=["upload"], format="mp4")
-            video_path = gr.Textbox(label="或输入本地视频路径（可选）", placeholder="data/raw/spin.mp4")
+        # ---- Input section ----
+        with gr.Group():
+            gr.Markdown("### 📹 输入")
+            with gr.Row():
+                video_input = gr.Video(
+                    label="上传视频", sources=["upload"], format="mp4",
+                )
+                with gr.Column():
+                    video_path = gr.Textbox(
+                        label="或输入本地路径", placeholder="data/raw/spin.mp4",
+                    )
+                    model_path = gr.Textbox(
+                        label="YOLO Pose 权重", value="yolo11n-pose.pt",
+                    )
+
+            with gr.Row():
+                thresholds_path = gr.Textbox(
+                    label="阈值文件（可选）", value="data/thresholds.json",
+                )
+                kpt_conf = gr.Slider(
+                    0.05, 0.8, value=0.20, step=0.05, label="关键点置信度",
+                )
+                view_select = gr.Dropdown(
+                    choices=VIEW_CHOICES, value="unknown", label="拍摄视角",
+                )
 
         with gr.Row():
-            model_path = gr.Textbox(label="YOLO Pose 权重路径", value="yolo11n-pose.pt")
-            thresholds_path = gr.Textbox(label="thresholds.json（可选）", value="data/thresholds.json")
-            kpt_conf = gr.Slider(0.05, 0.8, value=0.20, step=0.05, label="关键点置信度阈值")
-            view_select = gr.Dropdown(choices=VIEW_CHOICES, value="unknown", label="拍摄视角")
+            run_btn = gr.Button("🚀 开始识别与评估", variant="primary", size="lg")
+            rerun_btn = gr.Button("🔄 用选择的动作重新评分", variant="secondary")
 
+        status = gr.Markdown("**状态**：待开始")
+
+        # ---- Detection info ----
         with gr.Row():
-            run_btn = gr.Button("开始识别与评估", variant="primary")
-            rerun_btn = gr.Button("用选择的动作重新评分", variant="secondary")
-
-        status = gr.Markdown("状态：待开始")
-
-        with gr.Row():
-            detected_action_md = gr.Markdown("**自动识别动作：** -")
-            candidates_md = gr.Markdown("**候选动作（Top-3）：** -")
+            detected_action_md = gr.Markdown("**自动识别动作：** —")
+            candidates_md = gr.Markdown("**候选动作（Top-3）：** —")
 
         with gr.Row():
             manual_action = gr.Dropdown(
-                choices=ACTION_CHOICES,
-                value="spin_in_place",
-                label="手动选择动作（识别错了就改这里）",
-                interactive=True,
+                choices=ACTION_CHOICES, value="spin_in_place",
+                label="手动选择动作（识别错了就改这里）", interactive=True,
             )
 
-        with gr.Row():
-            original_player = gr.Video(label="原始视频（回放）")
-            annotated_player = gr.Video(label="标注视频（回放）")
+        # ---- Results section ----
+        gr.Markdown("### 📊 评估结果")
 
         with gr.Row():
-            report_json = gr.JSON(label="Report（结构化结果）")
+            result_html = gr.HTML(label="结构化结果")
+
+        with gr.Row(equal_height=True):
+            radar_img = gr.Image(label="能力雷达图", type="filepath")
+            cop_img = gr.Image(label="重心轨迹 (COP)", type="filepath")
+            symmetry_img = gr.Image(label="对称性分析", type="filepath")
+
+        # ---- Video section ----
+        gr.Markdown("### 🎬 视频")
+        with gr.Row():
+            original_player = gr.Video(label="原始视频")
+            annotated_player = gr.Video(label="骨骼标注视频")
+
+        # ---- Raw data section ----
+        with gr.Accordion("📋 原始 JSON 报告", open=False):
+            report_json = gr.JSON(label="完整报告数据")
             report_file = gr.File(label="下载 report.json")
+
+        # ---- Helpers ----
 
         def _resolve_video_path(uploaded, typed_path):
             if uploaded is not None:
@@ -86,14 +123,12 @@ def build_app():
                 return typed_path
             return None
 
-        def _top3_candidates_md(candidates):
+        def _top3_md(candidates):
             if not candidates:
-                return "**候选动作（Top-3）：** -"
-            top = candidates[:3]
+                return "**候选动作（Top-3）：** —"
             lines = []
-            for c in top:
-                a = c.action
-                lines.append(f"- {zh(a)}（{a}）: **{c.score:.3f}**  细节: {c.details}")
+            for c in candidates[:3]:
+                lines.append(f"- {zh(c.action)}（{c.action}）: **{c.score:.3f}**")
             return "**候选动作（Top-3）：**\n" + "\n".join(lines)
 
         def _build_report(vp, ui_model, action_id, candidates, feat,
@@ -119,43 +154,63 @@ def build_app():
                 "artifacts": {"annotated_video": str(annotated_video)},
             }
 
+        def _generate_charts(action_id, grading, metrics, kpt_frames, kpt_conf_val):
+            reasons = grading.get("reasons", {})
+            action_zh = zh(action_id)
+
+            radar = generate_radar_chart(reasons, action_zh)
+            cop = generate_cop_trajectory(kpt_frames, conf_thresh=kpt_conf_val)
+            sym = generate_symmetry_chart(reasons, action_id)
+            html = generate_result_html(action_zh, grading, metrics)
+
+            return radar, cop, sym, html
+
+        # ---- Full pipeline ----
+
+        # 11 outputs: status, detected_md, cand_md, original, annotated,
+        #             result_html, radar, cop, sym, report_json, report_file, state
+        N_OUT = 12
+        EMPTY = tuple([None] * N_OUT)
+
         def run_full(ui_video, ui_path, ui_model, ui_thresholds, ui_kpt_conf, ui_view):
             vp = _resolve_video_path(ui_video, ui_path)
-            empty = ("", "", "", None, None, None, None, None)
             if not vp:
-                yield ("状态：请先上传视频或输入路径", *empty[1:])
+                yield ("**状态**：请先上传视频或输入路径", *EMPTY[1:])
                 return
 
-            yield ("状态：已获取视频 ✅", *empty[1:3], vp, *empty[4:])
+            yield ("**状态**：已获取视频 ✅", "—", "—", vp,
+                   None, None, None, None, None, None, None, None)
 
             # Step 1: Pose
-            yield ("状态：Pose 推理中…", *empty[1:3], vp, *empty[4:])
+            yield ("**状态**：🔄 Pose 推理中（可能需要 1-2 分钟）…",
+                   "—", "—", vp, None, None, None, None, None, None, None, None)
             kpt_frames, video_meta = step_pose_infer(video_path=vp, model_path=ui_model)
 
             # Step 2: Detect
-            yield ("状态：动作识别中…", *empty[1:3], vp, *empty[4:])
+            yield ("**状态**：🔍 动作识别中…",
+                   "—", "—", vp, None, None, None, None, None, None, None, None)
             action_id, candidates, feat = step_detect_action(kpt_frames)
 
             detected_md = f"**自动识别动作：** **{zh(action_id)}**（{action_id}）"
-            cand_md = _top3_candidates_md(candidates)
+            cand_md = _top3_md(candidates)
 
-            # Step 3: Build context & evaluate
-            yield ("状态：评分中…", detected_md, cand_md, vp, *empty[4:])
+            # Step 3: Context + evaluate
+            yield ("**状态**：📊 评分中…", detected_md, cand_md, vp,
+                   None, None, None, None, None, None, None, None)
             thresholds, thresholds_meta = step_load_thresholds(
                 ui_thresholds if ui_thresholds else None
             )
             ctx = step_build_context(
-                kpt_frames=kpt_frames,
-                fps=video_meta.fps,
-                view=ui_view,
-                kpt_conf_thresh=float(ui_kpt_conf),
+                kpt_frames=kpt_frames, fps=video_meta.fps,
+                view=ui_view, kpt_conf_thresh=float(ui_kpt_conf),
             )
             action_id_eval, metrics_dict, grading, debug = step_evaluate(
                 action_id=action_id, ctx=ctx, thresholds=thresholds,
             )
 
-            # Step 4: Render
-            yield ("状态：生成可视化中…", detected_md, cand_md, vp, *empty[4:])
+            # Step 4: Render video
+            yield ("**状态**：🎬 生成标注视频中…", detected_md, cand_md, vp,
+                   None, None, None, None, None, None, None, None)
             paths = get_paths()
             out_stem = Path(vp).stem
             annotated_video = paths.videos / f"{out_stem}_{action_id_eval}_annotated.mp4"
@@ -165,28 +220,34 @@ def build_app():
                 conf_thresh=float(ui_kpt_conf),
             )
 
+            # Step 5: Charts
+            radar, cop, sym, res_html = _generate_charts(
+                action_id_eval, grading, metrics_dict, kpt_frames, float(ui_kpt_conf),
+            )
+
+            # Build report
             report = _build_report(
                 vp=vp, ui_model=ui_model, action_id=action_id_eval,
                 candidates=candidates, feat=feat,
                 thresholds_meta=thresholds_meta,
                 metrics_dict=metrics_dict, grading=grading,
                 annotated_video=annotated_video,
-                fps=video_meta.fps,
-                body_height_px=ctx.body_height_px,
+                fps=video_meta.fps, body_height_px=ctx.body_height_px,
                 view=ui_view,
             )
 
             report_path = paths.reports / f"{out_stem}_{action_id_eval}_ui_report.json"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
             )
 
+            sev = grading.get("severity", "?")
+            pass_str = "是" if grading.get("pass") else "否"
             done_txt = (
-                f"状态：完成 ✅ ｜动作：**{zh(action_id_eval)}** ｜"
-                f"偏差：**{grading.get('severity')}** ｜"
-                f"达标：**{'是' if grading.get('pass') else '否'}**"
-                "\n\n若识别错了：在下拉框选择正确动作 → 点「用选择的动作重新评分」。"
+                f"**状态**：完成 ✅ ｜ 动作：**{zh(action_id_eval)}** ｜"
+                f" 偏差：**{sev}** ｜ 达标：**{pass_str}**\n\n"
+                "若识别错误：在下拉框选择正确动作 → 点「用选择的动作重新评分」"
             )
 
             cache = {
@@ -204,14 +265,16 @@ def build_app():
             }
 
             yield (done_txt, detected_md, cand_md, vp,
-                   str(annotated_video), report, str(report_path), cache)
+                   str(annotated_video), res_html, radar, cop, sym,
+                   report, str(report_path), cache)
+
+        # ---- Rerun with manual action ----
 
         def rerun_with_selected(selected_action_id, cache_state):
-            empty = ("", "", "", None, None, None, None, None)
             if not cache_state:
                 return (
-                    "状态：请先点击「开始识别与评估」完成一次推理后，才能重新评分。",
-                    *empty[1:]
+                    "**状态**：请先点击「开始识别与评估」完成一次推理。",
+                    *EMPTY[1:]
                 )
 
             vp = cache_state["video"]
@@ -229,7 +292,7 @@ def build_app():
                 f"**自动识别动作：** **{zh(cache_state.get('last_detected', 'unknown'))}**"
                 f"（{cache_state.get('last_detected', 'unknown')}）"
             )
-            cand_md = _top3_candidates_md(candidates)
+            cand_md = _top3_md(candidates)
 
             ctx = step_build_context(
                 kpt_frames=kpt_frames, fps=fps,
@@ -249,6 +312,10 @@ def build_app():
                 conf_thresh=kpt_conf_local,
             )
 
+            radar, cop, sym, res_html = _generate_charts(
+                action_id_eval, grading, metrics_dict, kpt_frames, kpt_conf_local,
+            )
+
             report = _build_report(
                 vp=vp, ui_model=ui_model, action_id=action_id_eval,
                 candidates=candidates, feat=feat,
@@ -260,32 +327,39 @@ def build_app():
             report_path = paths.reports / f"{out_stem}_{action_id_eval}_manual_{ts}.json"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
             )
 
+            sev = grading.get("severity", "?")
+            pass_str = "是" if grading.get("pass") else "否"
             done_txt = (
-                f"状态：完成（手动重评分）✅ ｜动作：**{zh(action_id_eval)}** ｜"
-                f"偏差：**{grading.get('severity')}** ｜"
-                f"达标：**{'是' if grading.get('pass') else '否'}**"
+                f"**状态**：完成（手动重评分）✅ ｜ 动作：**{zh(action_id_eval)}** ｜"
+                f" 偏差：**{sev}** ｜ 达标：**{pass_str}**"
             )
 
             cache_state["last_manual"] = action_id_eval
 
             return (done_txt, detected_md, cand_md, vp,
-                    str(annotated_video), report, str(report_path), cache_state)
+                    str(annotated_video), res_html, radar, cop, sym,
+                    report, str(report_path), cache_state)
+
+        all_outputs = [
+            status, detected_action_md, candidates_md, original_player,
+            annotated_player, result_html, radar_img, cop_img, symmetry_img,
+            report_json, report_file, state,
+        ]
 
         run_btn.click(
             fn=run_full,
-            inputs=[video_input, video_path, model_path, thresholds_path, kpt_conf, view_select],
-            outputs=[status, detected_action_md, candidates_md, original_player,
-                     annotated_player, report_json, report_file, state],
+            inputs=[video_input, video_path, model_path, thresholds_path,
+                    kpt_conf, view_select],
+            outputs=all_outputs,
         )
 
         rerun_btn.click(
             fn=rerun_with_selected,
             inputs=[manual_action, state],
-            outputs=[status, detected_action_md, candidates_md, original_player,
-                     annotated_player, report_json, report_file, state],
+            outputs=all_outputs,
         )
 
     return demo

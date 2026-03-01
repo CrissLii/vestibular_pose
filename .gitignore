@@ -45,3 +45,7 @@ data/calib/
 
 # Keep thresholds config (small JSON)
 !data/thresholds.json
+
+# Node / Frontend
+node_modules/
+frontend/dist/

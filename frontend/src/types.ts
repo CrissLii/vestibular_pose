@@ -40,6 +40,7 @@ export interface EvalResponse {
   symmetry_data: SymmetryItem[];
   annotated_video: string;
   report_url?: string;
+  timings?: Record<string, number>;
 }
 
 export type AppPhase = 'idle' | 'uploading' | 'processing' | 'done' | 'error';

@@ -2,17 +2,31 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import tempfile
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+
+def _sanitize(obj: Any) -> Any:
+    """Replace NaN / Infinity with None so JSON serialization succeeds."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize(v) for v in obj]
+    return obj
 
 from ..actions.labels import zh, ACTION_LABELS_ZH
 from ..pipeline.auto_steps import (
@@ -87,20 +101,23 @@ async def evaluate_video(
     tmp_path = tmp.name
 
     try:
-        # Step 1: Pose inference
+        import time as _time
+        timings: dict[str, float] = {}
+
+        t0 = _time.perf_counter()
         kpt_frames, video_meta = step_pose_infer(
             video_path=tmp_path, model_path=model_path,
         )
+        timings["pose_inference"] = round(_time.perf_counter() - t0, 2)
 
-        # Step 2: Detect action
+        t0 = _time.perf_counter()
         action_id, candidates, feat = step_detect_action(kpt_frames)
+        timings["action_detection"] = round(_time.perf_counter() - t0, 2)
 
-        # Step 3: Load thresholds (optional)
+        t0 = _time.perf_counter()
         thresholds, thresholds_meta = step_load_thresholds(
             paths.data / "thresholds.json"
         )
-
-        # Step 4: Build context & evaluate
         ctx = step_build_context(
             kpt_frames=kpt_frames,
             fps=video_meta.fps,
@@ -110,8 +127,9 @@ async def evaluate_video(
         action_id_eval, metrics_dict, grading, debug = step_evaluate(
             action_id=action_id, ctx=ctx, thresholds=thresholds,
         )
+        timings["evaluation"] = round(_time.perf_counter() - t0, 2)
 
-        # Step 5: Render annotated video
+        t0 = _time.perf_counter()
         out_stem = Path(video.filename or "video").stem
         annotated_path = paths.videos / f"{out_stem}_{action_id_eval}_annotated.mp4"
         step_render_video(
@@ -122,12 +140,15 @@ async def evaluate_video(
             grading=grading,
             conf_thresh=kpt_conf,
         )
+        timings["video_render"] = round(_time.perf_counter() - t0, 2)
 
-        # Step 6: Generate charts
+        t0 = _time.perf_counter()
         reasons = grading.get("reasons", {})
         radar_path = generate_radar_chart(reasons, zh(action_id_eval))
         cop_path = generate_cop_trajectory(kpt_frames, conf_thresh=kpt_conf)
         sym_path = generate_symmetry_chart(reasons, action_id_eval)
+        timings["chart_generation"] = round(_time.perf_counter() - t0, 2)
+        timings["total"] = round(sum(timings.values()), 2)
 
         # Build metric scores for frontend radar chart (1-5 scale)
         radar_data = []
@@ -179,9 +200,12 @@ async def evaluate_video(
         }
         report_path = paths.reports / f"{out_stem}_{action_id_eval}_report.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        report_path.write_text(
+            json.dumps(_sanitize(report), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-        return {
+        return _sanitize({
             "session_id": session_id,
             "action_detected": action_id_eval,
             "action_detected_zh": zh(action_id_eval),
@@ -197,7 +221,8 @@ async def evaluate_video(
             "symmetry_data": sym_data,
             "annotated_video": f"/static/videos/{annotated_path.name}",
             "report_url": f"/static/reports/{report_path.name}",
-        }
+            "timings": timings,
+        })
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -254,7 +279,7 @@ async def re_evaluate(
     cop_data = _extract_cop_data(kpt_frames, kpt_conf)
     sym_data = _extract_symmetry_data(reasons, action_id_eval)
 
-    return {
+    return _sanitize({
         "session_id": session_id,
         "action_detected": action_id_eval,
         "action_detected_zh": zh(action_id_eval),
@@ -269,7 +294,7 @@ async def re_evaluate(
         "cop_data": cop_data,
         "symmetry_data": sym_data,
         "annotated_video": f"/static/videos/{annotated_path.name}",
-    }
+    })
 
 
 @app.get("/api/chart/radar/{session_id}")

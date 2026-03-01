@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { RotateCcw, Star, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { RotateCcw, Star, ChevronDown, ChevronUp, Download, Clock } from 'lucide-react';
 import type { EvalResponse } from '../types';
 import { RadarChart } from './RadarChart';
 import { CopTrajectory } from './CopTrajectory';
@@ -8,6 +8,15 @@ import { MetricTable } from './MetricTable';
 import { VideoPlayer } from './VideoPlayer';
 import { SeverityBadge, overallStars } from './SeverityBadge';
 import './ResultPanel.css';
+
+const TIMING_LABELS: Record<string, string> = {
+  pose_inference: '姿态估计',
+  action_detection: '动作识别',
+  evaluation: '指标计算',
+  video_render: '视频渲染',
+  chart_generation: '图表生成',
+  total: '总耗时',
+};
 
 interface Props {
   result: EvalResponse;
@@ -74,6 +83,25 @@ export function ResultPanel({ result, onReEvaluate, onReset }: Props) {
             )}
           </div>
         </div>
+
+        {/* Timing breakdown */}
+        {result.timings && (
+          <div className="timing-bar">
+            <Clock size={14} className="timing-icon" />
+            {Object.entries(result.timings)
+              .filter(([k]) => k !== 'total')
+              .map(([k, v]) => (
+                <span key={k} className="timing-chip">
+                  {TIMING_LABELS[k] || k}
+                  <strong>{v}s</strong>
+                </span>
+              ))}
+            <span className="timing-chip timing-total">
+              {TIMING_LABELS.total}
+              <strong>{result.timings.total}s</strong>
+            </span>
+          </div>
+        )}
 
         {/* Re-evaluate row */}
         <div className="re-eval-row">

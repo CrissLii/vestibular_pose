@@ -4,6 +4,8 @@
   padding-top: 60px;
 }
 
+/* ── Upload card (idle state) ── */
+
 .upload-card {
   width: 100%;
   max-width: 640px;
@@ -54,17 +56,9 @@
   align-items: center;
   gap: 8px;
 }
-.file-icon {
-  color: var(--success);
-}
-.file-name {
-  font-weight: 500;
-  font-size: 15px;
-}
-.file-size {
-  font-size: 13px;
-  color: var(--text-muted);
-}
+.file-icon { color: var(--success); }
+.file-name { font-weight: 500; font-size: 15px; }
+.file-size { font-size: 13px; color: var(--text-muted); }
 
 .settings-row {
   display: flex;
@@ -81,9 +75,7 @@
   color: var(--text-muted);
 }
 .setting select,
-.setting input[type="range"] {
-  flex: 1;
-}
+.setting input[type="range"] { flex: 1; }
 .setting select {
   background: var(--bg);
   color: var(--text);
@@ -99,10 +91,7 @@
   min-width: 34px;
 }
 
-.action-row {
-  display: flex;
-  gap: 12px;
-}
+.action-row { display: flex; gap: 12px; }
 
 .btn {
   display: inline-flex;
@@ -116,17 +105,9 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.btn-primary {
-  background: var(--primary);
-  color: white;
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--primary-light);
-}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-light); }
 .btn-ghost {
   background: transparent;
   color: var(--text-muted);
@@ -135,35 +116,6 @@
 .btn-ghost:hover:not(:disabled) {
   background: var(--bg-card-hover);
   color: var(--text);
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.progress-container {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.progress-bar {
-  height: 4px;
-  background: var(--border);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), var(--primary-light));
-  border-radius: 2px;
-  transition: width 0.5s ease;
-}
-.progress-text {
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .error-banner {
@@ -176,4 +128,223 @@
   border-radius: 8px;
   color: var(--danger);
   font-size: 13px;
+}
+
+/* ── Processing card ── */
+
+.processing-card {
+  width: 100%;
+  max-width: 640px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 40px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+}
+
+.processing-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.pulse-ring {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+}
+.pulse-ring::before,
+.pulse-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--primary);
+  animation: pulse-expand 2s ease-out infinite;
+}
+.pulse-ring::after {
+  animation-delay: 1s;
+}
+@keyframes pulse-expand {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.processing-icon {
+  color: var(--primary-light);
+}
+
+.processing-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.processing-stage {
+  font-size: 14px;
+  color: var(--primary-light);
+  min-height: 20px;
+  transition: opacity 0.3s;
+  text-align: center;
+}
+
+/* ── Pipeline steps ── */
+
+.pipeline-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  width: 100%;
+  justify-content: center;
+}
+
+.pipeline-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  flex: 1;
+  max-width: 90px;
+}
+
+.step-icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+  z-index: 1;
+}
+
+.step-pending .step-icon-wrap {
+  background: var(--bg);
+  border: 2px solid var(--border);
+  color: var(--text-muted);
+}
+.step-active .step-icon-wrap {
+  background: rgba(99, 102, 241, 0.15);
+  border: 2px solid var(--primary);
+  color: var(--primary-light);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
+}
+.step-completed .step-icon-wrap {
+  background: rgba(34, 197, 94, 0.15);
+  border: 2px solid var(--success);
+  color: var(--success);
+}
+
+.step-label {
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.3;
+  transition: color 0.3s;
+}
+.step-pending .step-label { color: var(--text-muted); }
+.step-active .step-label { color: var(--primary-light); font-weight: 500; }
+.step-completed .step-label { color: var(--success); }
+
+.step-connector {
+  position: absolute;
+  top: 18px;
+  left: calc(50% + 22px);
+  width: calc(100% - 44px);
+  height: 2px;
+  background: var(--border);
+  transition: background 0.4s;
+}
+.step-connector.filled {
+  background: var(--success);
+}
+
+/* ── Progress bar (processing) ── */
+
+.progress-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progress-bar-large {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill-large {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--primary-light), #a78bfa);
+  border-radius: 4px;
+  transition: width 0.35s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-glow {
+  position: absolute;
+  right: 0;
+  top: -2px;
+  bottom: -2px;
+  width: 20px;
+  background: rgba(255, 255, 255, 0.4);
+  filter: blur(6px);
+  animation: glow-slide 1.5s ease-in-out infinite;
+}
+@keyframes glow-slide {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.progress-pct {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-light);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.progress-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── File info in processing state ── */
+
+.processing-file-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 6px 14px;
+  border-radius: 20px;
+}
+.file-size-sm {
+  opacity: 0.6;
+}
+
+/* ── Shared animations ── */
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

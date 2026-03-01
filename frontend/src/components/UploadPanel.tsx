@@ -1,11 +1,15 @@
 import { useRef, useState, useCallback } from 'react';
-import { Upload, Video, Settings, AlertCircle, Loader2 } from 'lucide-react';
+import {
+  Upload, Video, Settings, AlertCircle, Loader2,
+  ScanLine, Brain, BarChart3, Film, CheckCircle2,
+} from 'lucide-react';
 import type { AppPhase } from '../types';
 import './UploadPanel.css';
 
 interface Props {
   phase: AppPhase;
   progress: number;
+  stage: string;
   error: string;
   view: string;
   kptConf: number;
@@ -15,8 +19,23 @@ interface Props {
   onReset: () => void;
 }
 
+const PIPELINE_STEPS = [
+  { id: 'upload',   label: '上传视频',   icon: Upload,       threshold: 5 },
+  { id: 'pose',     label: '姿态估计',   icon: ScanLine,     threshold: 15 },
+  { id: 'detect',   label: '动作识别',   icon: Brain,        threshold: 45 },
+  { id: 'evaluate', label: '指标计算',   icon: BarChart3,    threshold: 55 },
+  { id: 'render',   label: '视频渲染',   icon: Film,         threshold: 78 },
+  { id: 'done',     label: '完成',       icon: CheckCircle2, threshold: 96 },
+];
+
+function stepStatus(progress: number, threshold: number, nextThreshold: number) {
+  if (progress >= nextThreshold) return 'completed';
+  if (progress >= threshold) return 'active';
+  return 'pending';
+}
+
 export function UploadPanel({
-  phase, progress, error, view, kptConf,
+  phase, progress, stage, error, view, kptConf,
   onViewChange, onKptConfChange, onUpload, onReset,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,16 +62,85 @@ export function UploadPanel({
 
   const isProcessing = phase === 'uploading' || phase === 'processing';
 
+  // Processing view: full pipeline visualization
+  if (isProcessing) {
+    return (
+      <div className="upload-panel">
+        <div className="processing-card">
+          {/* Animated header */}
+          <div className="processing-header">
+            <div className="pulse-ring">
+              <Loader2 size={32} className="spin processing-icon" />
+            </div>
+            <h2 className="processing-title">正在分析视频</h2>
+            <p className="processing-stage">{stage}</p>
+          </div>
+
+          {/* Pipeline steps */}
+          <div className="pipeline-steps">
+            {PIPELINE_STEPS.map((step, i) => {
+              const nextT = i < PIPELINE_STEPS.length - 1
+                ? PIPELINE_STEPS[i + 1].threshold : 100;
+              const status = stepStatus(progress, step.threshold, nextT);
+              const Icon = step.icon;
+              return (
+                <div key={step.id} className={`pipeline-step step-${status}`}>
+                  <div className="step-icon-wrap">
+                    {status === 'active' ? (
+                      <Loader2 size={18} className="spin" />
+                    ) : status === 'completed' ? (
+                      <CheckCircle2 size={18} />
+                    ) : (
+                      <Icon size={18} />
+                    )}
+                  </div>
+                  <span className="step-label">{step.label}</span>
+                  {i < PIPELINE_STEPS.length - 1 && (
+                    <div className={`step-connector ${status === 'completed' ? 'filled' : ''}`} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Progress bar */}
+          <div className="progress-section">
+            <div className="progress-bar-large">
+              <div className="progress-fill-large" style={{ width: `${progress}%` }}>
+                <div className="progress-glow" />
+              </div>
+            </div>
+            <div className="progress-meta">
+              <span className="progress-pct">{Math.round(progress)}%</span>
+              <span className="progress-hint">请耐心等待，视频越长处理时间越久</span>
+            </div>
+          </div>
+
+          {/* File info */}
+          {selectedFile && (
+            <div className="processing-file-info">
+              <Video size={14} />
+              <span>{selectedFile.name}</span>
+              <span className="file-size-sm">
+                ({(selectedFile.size / 1024 / 1024).toFixed(1)} MB)
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Idle / error view: upload form
   return (
     <div className="upload-panel">
       <div className="upload-card">
-        {/* Drop zone */}
         <div
           className={`dropzone ${dragOver ? 'drag-over' : ''} ${selectedFile ? 'has-file' : ''}`}
           onDrop={handleDrop}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
-          onClick={() => !isProcessing && inputRef.current?.click()}
+          onClick={() => inputRef.current?.click()}
         >
           <input
             ref={inputRef}
@@ -78,7 +166,6 @@ export function UploadPanel({
           )}
         </div>
 
-        {/* Settings */}
         <div className="settings-row">
           <div className="setting">
             <Settings size={14} />
@@ -103,19 +190,13 @@ export function UploadPanel({
           </div>
         </div>
 
-        {/* Action buttons */}
         <div className="action-row">
           <button
             className="btn btn-primary"
-            disabled={!selectedFile || isProcessing}
+            disabled={!selectedFile}
             onClick={handleStart}
           >
-            {isProcessing ? (
-              <>
-                <Loader2 size={16} className="spin" />
-                分析中...
-              </>
-            ) : '开始评估'}
+            开始评估
           </button>
           {(phase === 'error' || selectedFile) && (
             <button className="btn btn-ghost" onClick={() => { onReset(); setSelectedFile(null); }}>
@@ -124,21 +205,6 @@ export function UploadPanel({
           )}
         </div>
 
-        {/* Progress bar */}
-        {isProcessing && (
-          <div className="progress-container">
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${progress}%` }} />
-            </div>
-            <span className="progress-text">
-              {progress < 30 ? '正在上传视频...' :
-               progress < 80 ? '正在进行姿态估计与动作评估...' :
-               '正在生成标注视频...'}
-            </span>
-          </div>
-        )}
-
-        {/* Error */}
         {phase === 'error' && (
           <div className="error-banner">
             <AlertCircle size={16} />

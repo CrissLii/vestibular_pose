@@ -189,3 +189,47 @@
 .metric-section {
   overflow-x: auto;
 }
+
+/* ── Timing bar ── */
+
+.timing-bar {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timing-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.timing-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.timing-chip strong {
+  color: var(--text);
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.timing-total {
+  margin-left: auto;
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.25);
+}
+.timing-total strong {
+  color: var(--primary-light);
+}

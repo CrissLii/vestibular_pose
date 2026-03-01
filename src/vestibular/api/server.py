@@ -120,7 +120,7 @@ async def evaluate_video(
 
             # Step 2: Detect action
             t0 = _time.perf_counter()
-            action_id, candidates, feat = step_detect_action(kpt_frames)
+            action_id, candidates, feat = step_detect_action(kpt_frames, fps=video_meta.fps)
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["action_detection"] = elapsed
             yield _event("step_done", step="detect", elapsed=elapsed,

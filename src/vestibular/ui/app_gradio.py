@@ -189,7 +189,7 @@ def build_app():
             # Step 2: Detect
             yield ("**状态**：🔍 动作识别中…",
                    "—", "—", vp, None, None, None, None, None, None, None, None)
-            action_id, candidates, feat = step_detect_action(kpt_frames)
+            action_id, candidates, feat = step_detect_action(kpt_frames, fps=video_meta.fps)
 
             detected_md = f"**自动识别动作：** **{zh(action_id)}**（{action_id}）"
             cand_md = _top3_md(candidates)

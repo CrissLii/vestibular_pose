@@ -22,15 +22,16 @@ class YoloPoseEstimator:
         self.cfg = cfg
         self.model = YOLO(cfg.model_path)
 
-    def predict_video(self, video_path: str | Path, verbose: bool = False):
-        # Ultralytics returns a generator/list of Results (one per frame)
+    def predict_video(self, video_path: str | Path, verbose: bool = False,
+                       vid_stride: int = 1):
         return self.model.predict(
             source=str(video_path),
             conf=self.cfg.conf,
             imgsz=self.cfg.imgsz,
             device=self.cfg.device,
             verbose=verbose,
-            stream=True,  # streaming yields results per frame without loading all into memory
+            stream=True,
+            vid_stride=vid_stride,
         )
 
     def results_to_keypoints(self, results_stream):

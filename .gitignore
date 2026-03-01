@@ -43,8 +43,13 @@ data/outputs/
 data/DataSet/
 data/calib/
 
-# Keep thresholds config (small JSON)
+# Large cache / model files
+data/kpt_cache.pkl
+
+# Keep thresholds config and trained classifier
 !data/thresholds.json
+!data/action_classifier.pkl
+!data/action_features.csv
 
 # Node / Frontend
 node_modules/

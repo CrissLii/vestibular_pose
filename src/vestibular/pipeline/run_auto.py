@@ -41,7 +41,7 @@ def run_auto_on_video(
     )
 
     # 2) Action detection
-    action_id, candidates, feat = step_detect_action(kpt_frames)
+    action_id, candidates, feat = step_detect_action(kpt_frames, fps=video_meta.fps)
 
     # 3) Thresholds
     thresholds, thresholds_meta = step_load_thresholds(thresholds_path)

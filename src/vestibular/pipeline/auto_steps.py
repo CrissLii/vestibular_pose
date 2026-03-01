@@ -33,9 +33,9 @@ def step_pose_infer(
     return kpt_frames, meta
 
 
-def step_detect_action(kpt_frames):
-    """Step 2: MVP action detection by rules."""
-    action, candidates, feat = detect_action_mvp(kpt_frames)
+def step_detect_action(kpt_frames, fps: float = 30.0):
+    """Step 2: action detection (ML classifier or rule-based fallback)."""
+    action, candidates, feat = detect_action_mvp(kpt_frames, fps=fps)
     return action, candidates, feat
 
 

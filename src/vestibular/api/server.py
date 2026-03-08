@@ -76,8 +76,15 @@ app.mount("/static/videos", StaticFiles(directory=str(paths.videos)), name="vide
 app.mount("/static/reports", StaticFiles(directory=str(paths.reports)), name="reports")
 
 # 生产部署：若有前端构建产物则直接提供，无需 Nginx
-_frontend_dist = paths.root / "frontend" / "dist"
-if _frontend_dist.exists() and (_frontend_dist / "index.html").exists():
+# pip install 后 paths.root 在 site-packages，需同时尝试当前工作目录（systemd 的 WorkingDirectory）
+_candidates = [paths.root, Path.cwd()]
+_frontend_dist = None
+for _root in _candidates:
+    _d = _root / "frontend" / "dist"
+    if _d.exists() and (_d / "index.html").exists():
+        _frontend_dist = _d
+        break
+if _frontend_dist is not None:
     app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="frontend_assets")
 
     class SPAFallbackMiddleware(BaseHTTPMiddleware):

@@ -38,7 +38,7 @@ export function SymmetryChart({ data }: Props) {
             borderRadius: 8,
             fontSize: 12,
           }}
-          formatter={(value: number) => value.toFixed(3)}
+          formatter={(value: number | undefined) => (value != null ? value.toFixed(3) : '')}
         />
         <Legend
           wrapperStyle={{ fontSize: 12, color: 'var(--text-muted)' }}

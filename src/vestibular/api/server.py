@@ -14,6 +14,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 
 def _sanitize(obj: Any) -> Any:
@@ -73,6 +74,33 @@ paths.reports.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static/videos", StaticFiles(directory=str(paths.videos)), name="videos")
 app.mount("/static/reports", StaticFiles(directory=str(paths.reports)), name="reports")
+
+# 生产部署：若有前端构建产物则直接提供，无需 Nginx
+_frontend_dist = paths.root / "frontend" / "dist"
+if _frontend_dist.exists() and (_frontend_dist / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="frontend_assets")
+
+    class SPAFallbackMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            response = await call_next(request)
+            if response.status_code == 404:
+                path = request.scope.get("path", "")
+                if not path.startswith("/api") and not path.startswith("/static"):
+                    index_path = _frontend_dist / "index.html"
+                    return FileResponse(str(index_path), media_type="text/html")
+            return response
+
+    app.add_middleware(SPAFallbackMiddleware)
+
+    @app.get("/")
+    def _serve_index():
+        return FileResponse(str(_frontend_dist / "index.html"), media_type="text/html")
+
+    _favicon = _frontend_dist / "favicon.ico"
+    if _favicon.is_file():
+        @app.get("/favicon.ico")
+        def _serve_favicon():
+            return FileResponse(str(_favicon))
 
 
 @app.get("/api/actions")

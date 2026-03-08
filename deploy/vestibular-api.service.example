@@ -1,0 +1,22 @@
+# 复制到 /etc/systemd/system/vestibular-api.service
+# 若项目路径或用户不同，请修改 WorkingDirectory、User、ExecStart 中的路径。
+# 然后执行:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable vestibular-api
+#   sudo systemctl start vestibular-api
+
+[Unit]
+Description=Vestibular Pose FastAPI Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vestibular_pose
+Environment="PATH=/opt/vestibular_pose/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/opt/vestibular_pose/.venv/bin/uvicorn vestibular.api.server:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

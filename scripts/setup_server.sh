@@ -10,6 +10,8 @@ ROOT="$PWD"
 echo "==> 创建 Python 虚拟环境并安装后端依赖"
 python3 -m venv .venv
 source .venv/bin/activate
+# 旧版 pip 无法安装 pyproject.toml 项目，先升级
+pip install --upgrade pip
 pip install -e .
 
 echo "==> 创建数据目录"

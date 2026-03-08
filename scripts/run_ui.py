@@ -5,7 +5,7 @@ if __name__ == "__main__":
     project_root = Path(__file__).resolve().parent.parent
     app = build_app()
     app.launch(
-        server_name="127.0.0.1",
+        server_name="0.0.0.0",  # 对外暴露，允许局域网/外网访问
         server_port=7860,
         share=False,
         allowed_paths=[

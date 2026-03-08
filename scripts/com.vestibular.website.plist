@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vestibular.website</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/criss/Desktop/机器学习学习资料/石若含毕业项目/vestibular_pose/scripts/run_background.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/criss/Desktop/机器学习学习资料/石若含毕业项目/vestibular_pose</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/criss/Desktop/机器学习学习资料/石若含毕业项目/vestibular_pose/logs/launchd_stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/criss/Desktop/机器学习学习资料/石若含毕业项目/vestibular_pose/logs/launchd_stderr.log</string>
+</dict>
+</plist>

@@ -12,7 +12,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 # 旧版 pip 无法安装 pyproject.toml 项目，先升级
 pip install --upgrade pip
-pip install -e .
+# 服务器上用普通安装即可（可编辑安装需 PEP 660 支持）
+pip install .
 
 echo "==> 创建数据目录"
 mkdir -p data/raw data/outputs/videos data/outputs/reports

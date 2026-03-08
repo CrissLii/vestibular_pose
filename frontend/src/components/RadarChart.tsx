@@ -78,9 +78,10 @@ export function RadarChart({ data }: Props) {
             borderRadius: 8,
             fontSize: 12,
           }}
-          formatter={(value: number | undefined, _name: string, props: { payload: RadarDataPoint }) => {
+          formatter={(value: number | undefined, _name?: string, props?: { payload: RadarDataPoint }) => {
+            if (value == null || !props) return ['—', '—'];
             const p = props.payload;
-            return value != null ? [`${value}/5 (${p.level})`, p.metric] : ['—', p.metric];
+            return [`${value}/5 (${p.level})`, p.metric];
           }}
         />
       </RChart>

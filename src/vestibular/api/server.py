@@ -140,15 +140,19 @@ async def evaluate_video(
     def _event(evt: str, **kwargs) -> str:
         return json.dumps({"event": evt, **kwargs}, ensure_ascii=False) + "\n"
 
-    def generate():
+    async def generate():
+        import asyncio
         timings: dict[str, float] = {}
 
         try:
-            # Step 1: Pose inference
+            # Step 1: Pose inference（CPU密集型，放入线程池，不阻塞事件循环）
+            yield _event("heartbeat", msg="姿态估计开始...")
+
             t0 = _time.perf_counter()
-            kpt_frames, video_meta = step_pose_infer(
+            kpt_frames, video_meta = await asyncio.to_thread(
+                step_pose_infer,
                 video_path=tmp_path, model_path=model_path,
-                vid_stride=3,  # 服务器CPU较弱，跳帧处理加速3倍
+                vid_stride=3,
             )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["pose_inference"] = elapsed
@@ -156,7 +160,9 @@ async def evaluate_video(
 
             # Step 2: Detect action
             t0 = _time.perf_counter()
-            action_id, candidates, feat = step_detect_action(kpt_frames, fps=video_meta.fps)
+            action_id, candidates, feat = await asyncio.to_thread(
+                step_detect_action, kpt_frames, fps=video_meta.fps
+            )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["action_detection"] = elapsed
             yield _event("step_done", step="detect", elapsed=elapsed,
@@ -169,7 +175,8 @@ async def evaluate_video(
                 kpt_frames=kpt_frames, fps=video_meta.fps,
                 view=view, kpt_conf_thresh=kpt_conf,
             )
-            action_id_eval, metrics_dict, grading, debug = step_evaluate(
+            action_id_eval, metrics_dict, grading, debug = await asyncio.to_thread(
+                step_evaluate,
                 action_id=action_id, ctx=ctx, thresholds=thresholds,
             )
             elapsed = round(_time.perf_counter() - t0, 2)
@@ -180,7 +187,8 @@ async def evaluate_video(
             t0 = _time.perf_counter()
             out_stem = Path(filename or "video").stem
             annotated_path = paths.videos / f"{out_stem}_{action_id_eval}_annotated.mp4"
-            step_render_video(
+            await asyncio.to_thread(
+                step_render_video,
                 video_path=tmp_path, kpt_frames=kpt_frames,
                 out_path=annotated_path, action_id=action_id_eval,
                 grading=grading, conf_thresh=kpt_conf,
@@ -261,7 +269,9 @@ async def evaluate_video(
                              ensure_ascii=False) + "\n"
 
         except Exception as e:
-            yield json.dumps({"event": "error", "detail": str(e)},
+            import traceback
+            yield json.dumps({"event": "error", "detail": str(e),
+                              "traceback": traceback.format_exc()},
                              ensure_ascii=False) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

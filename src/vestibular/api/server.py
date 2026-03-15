@@ -150,9 +150,10 @@ async def evaluate_video(
 
             t0 = _time.perf_counter()
             kpt_frames, video_meta = await asyncio.to_thread(
-                step_pose_infer,
-                video_path=tmp_path, model_path=model_path,
-                vid_stride=3,
+                lambda: step_pose_infer(
+                    video_path=tmp_path, model_path=model_path,
+                    vid_stride=3,
+                )
             )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["pose_inference"] = elapsed
@@ -161,7 +162,7 @@ async def evaluate_video(
             # Step 2: Detect action
             t0 = _time.perf_counter()
             action_id, candidates, feat = await asyncio.to_thread(
-                step_detect_action, kpt_frames, fps=video_meta.fps
+                lambda: step_detect_action(kpt_frames, fps=video_meta.fps)
             )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["action_detection"] = elapsed
@@ -176,8 +177,9 @@ async def evaluate_video(
                 view=view, kpt_conf_thresh=kpt_conf,
             )
             action_id_eval, metrics_dict, grading, debug = await asyncio.to_thread(
-                step_evaluate,
-                action_id=action_id, ctx=ctx, thresholds=thresholds,
+                lambda: step_evaluate(
+                    action_id=action_id, ctx=ctx, thresholds=thresholds,
+                )
             )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["evaluation"] = elapsed
@@ -188,10 +190,11 @@ async def evaluate_video(
             out_stem = Path(filename or "video").stem
             annotated_path = paths.videos / f"{out_stem}_{action_id_eval}_annotated.mp4"
             await asyncio.to_thread(
-                step_render_video,
-                video_path=tmp_path, kpt_frames=kpt_frames,
-                out_path=annotated_path, action_id=action_id_eval,
-                grading=grading, conf_thresh=kpt_conf,
+                lambda: step_render_video(
+                    video_path=tmp_path, kpt_frames=kpt_frames,
+                    out_path=annotated_path, action_id=action_id_eval,
+                    grading=grading, conf_thresh=kpt_conf,
+                )
             )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["video_render"] = elapsed

@@ -277,7 +277,14 @@ async def evaluate_video(
                               "traceback": traceback.format_exc()},
                              ensure_ascii=False) + "\n"
 
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @app.post("/api/re-evaluate")

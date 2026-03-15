@@ -92,7 +92,11 @@ export async function evaluateVideo(
         try {
           const evt = JSON.parse(line);
 
-          if (evt.event === 'step_done') {
+          if (evt.event === 'heartbeat') {
+            // 后端确认开始处理，继续等待
+            onProgress?.({ pct: currentPct, stage: evt.msg || '正在进行姿态估计（YOLO Pose）...' });
+
+          } else if (evt.event === 'step_done') {
             const stepPct = STEP_PCT[evt.step] || currentPct;
             currentPct = stepPct;
             if (fillTimer) clearInterval(fillTimer);

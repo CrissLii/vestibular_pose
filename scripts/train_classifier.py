@@ -60,7 +60,7 @@ MODEL_WEIGHTS = "yolo11n-pose.pt"
 
 
 def find_videos(include_old: bool = True,
-                max_old_per_class: int = 4) -> list[tuple[str, Path, str]]:
+                max_old_per_class: int = 999) -> list[tuple[str, Path, str]]:
     """Scan dataset directories for video files.
 
     Returns list of (action_label, video_path, view).

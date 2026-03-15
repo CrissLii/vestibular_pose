@@ -148,6 +148,7 @@ async def evaluate_video(
             t0 = _time.perf_counter()
             kpt_frames, video_meta = step_pose_infer(
                 video_path=tmp_path, model_path=model_path,
+                vid_stride=3,  # 服务器CPU较弱，跳帧处理加速3倍
             )
             elapsed = round(_time.perf_counter() - t0, 2)
             timings["pose_inference"] = elapsed

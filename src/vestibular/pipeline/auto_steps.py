@@ -22,12 +22,13 @@ def step_pose_infer(
     conf: float = 0.25,
     imgsz: int = 640,
     device: Optional[str] = None,
+    vid_stride: int = 1,
 ):
     """Step 1: pose inference -> keypoints frames + video metadata."""
     estimator = YoloPoseEstimator(
         YoloPoseConfig(model_path=model_path, conf=conf, imgsz=imgsz, device=device)
     )
-    results_stream = estimator.predict_video(video_path)
+    results_stream = estimator.predict_video(video_path, vid_stride=vid_stride)
     kpt_frames = estimator.results_to_keypoints(results_stream)
     meta = get_video_meta(video_path)
     return kpt_frames, meta
